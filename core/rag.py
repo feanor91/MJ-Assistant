@@ -235,6 +235,7 @@ class VectorStore:
     def build_or_load(self, documents: Dict[str, str], db_dir: Path, source_dir: Path, progress_callback=None) -> Chroma:
         """Construit ou charge la base vectorielle avec progression"""
         db_dir_str = str(db_dir)
+        metadata_file = db_dir / "corpus_metadata.json"
         
         # Créer ou charger
         if not db_dir.exists() or not any(db_dir.iterdir()):
@@ -284,6 +285,13 @@ class VectorStore:
                 persist_directory=db_dir_str,
                 embedding_function=self.embeddings
             )
+            
+            # IMPORTANT: Sauvegarder les métadonnées si elles n'existent pas
+            # (cas où la base existe mais pas le fichier de métadonnées)
+            if not metadata_file.exists():
+                if progress_callback:
+                    progress_callback("Création des métadonnées manquantes...")
+                DocumentExtractor.save_corpus_metadata(source_dir, db_dir)
             
             if progress_callback:
                 progress_callback("✅ Base vectorielle chargée !")

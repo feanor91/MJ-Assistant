@@ -114,6 +114,9 @@ def init_session_state(config):
         st.session_state.message_count = 0
         st.session_state.auto_save_interval = config['ui'].get('auto_save_interval', 5)
         
+        # Largeur de la colonne personnages (par défaut 1.2)
+        st.session_state.char_column_width = 1.2
+        
         st.session_state.initialized = True
 
 
@@ -374,10 +377,105 @@ def render_timeline():
 
 def render_character_viewer():
     """Affiche le visualiseur de fiches de personnages"""
+    
+    # Slider de redimensionnement toujours visible en haut
+    current_width = st.session_state.get('char_column_width', 1.2)
+    
     st.markdown("### 📇 Fiches de personnage")
+    
+    # Slider horizontal avec style personnalisé
+    st.markdown("""
+    <style>
+    div[data-testid="stSlider"] {
+        padding-top: 0px;
+        padding-bottom: 10px;
+    }
+    div[data-testid="stSlider"] > label {
+        font-size: 0.8rem;
+        color: #888;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    col_slider, col_btns = st.columns([4, 1])
+    
+    with col_slider:
+        col_width = st.slider(
+            "↔️ Glisse pour ajuster la largeur",
+            min_value=0.5,
+            max_value=3.0,
+            value=current_width,
+            step=0.05,
+            format="%.2f",
+            help="Glisse le curseur pour redimensionner la colonne en temps réel",
+            key="width_slider"
+        )
+        
+        if col_width != current_width:
+            st.session_state.char_column_width = col_width
+            st.rerun()
+    
+    with col_btns:
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            # ◀ agrandit (pousse vers la gauche)
+            if st.button("◀", key="increase_width_btn", help="Agrandir", use_container_width=True):
+                new_width = min(3.0, current_width + 0.2)
+                st.session_state.char_column_width = new_width
+                st.rerun()
+        with btn_col2:
+            # ▶ réduit (pousse vers la droite)
+            if st.button("▶", key="decrease_width_btn", help="Réduire", use_container_width=True):
+                new_width = max(0.5, current_width - 0.2)
+                st.session_state.char_column_width = new_width
+                st.rerun()
+    
+    # Indicateur visuel de la taille
+    size_info = ""
+    if current_width < 1.0:
+        size_info = "📱 Compact"
+    elif current_width < 1.5:
+        size_info = "📄 Normal"
+    elif current_width < 2.5:
+        size_info = "📖 Large"
+    else:
+        size_info = "🖥️ Maximum"
+    
+    st.caption(f"Taille actuelle : {size_info}")
+    
+    st.markdown("---")
     
     char_manager = st.session_state.char_manager
     char_manager.refresh()
+    
+    characters = char_manager.characters
+    
+    if not characters:
+        st.info(f"Aucune fiche trouvée dans {st.session_state.char_dir}")
+        st.caption("Dépose des fichiers .txt, .md ou .pdf dans ce dossier.")
+        return
+    
+    # Sélection - SAUVEGARDER la sélection dans session_state
+    char_names = [""] + char_manager.get_character_names()
+    
+    # Récupérer la dernière sélection
+    default_index = 0
+    if 'selected_character' in st.session_state:
+        try:
+            default_index = char_names.index(st.session_state.selected_character)
+        except ValueError:
+            default_index = 0
+    
+    selected = st.selectbox(
+        "Choisir un personnage:",
+        char_names,
+        index=default_index,
+        key="char_selector_box"
+    )
+    
+    # Sauvegarder la sélection
+    if selected:
+        st.session_state.selected_character = selected
     
     characters = char_manager.characters
     
@@ -404,47 +502,217 @@ def render_character_viewer():
             # Affichage selon le type de fichier
             if char.is_pdf:
                 # Affichage du PDF
-                st.markdown(f"**Fichier PDF:** {char.file_path.name}")
+                st.markdown(f"**📄 Fichier:** {char.file_path.name}")
                 
-                # Bouton pour ouvrir dans l'explorateur
-                if st.button("📂 Ouvrir dans l'explorateur", key="open_pdf"):
-                    import subprocess
-                    import platform
-                    if platform.system() == 'Windows':
-                        subprocess.run(['explorer', str(char.file_path)])
-                    elif platform.system() == 'Darwin':  # macOS
-                        subprocess.run(['open', str(char.file_path)])
-                    else:  # Linux
-                        subprocess.run(['xdg-open', str(char.file_path)])
+                col1, col2 = st.columns([1, 1])
                 
-                # Visualiseur PDF intégré
+                with col1:
+                    # Bouton pour ouvrir dans l'explorateur
+                    if st.button("📂 Ouvrir dans lecteur PDF", key="open_pdf", use_container_width=True):
+                        import subprocess
+                        import platform
+                        if platform.system() == 'Windows':
+                            import os
+                            os.startfile(str(char.file_path))
+                        elif platform.system() == 'Darwin':  # macOS
+                            subprocess.run(['open', str(char.file_path)])
+                        else:  # Linux
+                            subprocess.run(['xdg-open', str(char.file_path)])
+                
+                with col2:
+                    # Bouton de téléchargement
+                    try:
+                        with open(char.file_path, "rb") as f:
+                            pdf_bytes = f.read()
+                        st.download_button(
+                            label="💾 Télécharger le PDF",
+                            data=pdf_bytes,
+                            file_name=char.file_path.name,
+                            mime="application/pdf",
+                            key="download_pdf",
+                            use_container_width=True
+                        )
+                    except Exception:
+                        pass
+                
+                st.markdown("---")
+                
+                # Visualiseur PDF avec PDF.js
                 try:
-                    # Encoder le PDF en base64
                     import base64
                     with open(char.file_path, "rb") as f:
-                        pdf_base64 = base64.b64encode(f.read()).decode()
+                        pdf_bytes = f.read()
+                        pdf_base64 = base64.b64encode(pdf_bytes).decode()
                     
-                    if pdf_base64:
-                        pdf_display = f'''
-                        <iframe src="data:application/pdf;base64,{pdf_base64}" 
-                                width="100%" 
-                                height="800" 
-                                type="application/pdf"
-                                style="border: 1px solid #ccc;">
-                        </iframe>
-                        '''
-                        st.markdown(pdf_display, unsafe_allow_html=True)
-                    else:
-                        st.error("Impossible de charger le PDF")
+                    st.markdown("#### 📖 Aperçu du document")
+                    
+                    # Utiliser PDF.js pour le rendu
+                    pdf_viewer_html = f'''
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            body {{
+                                margin: 0;
+                                padding: 0;
+                                overflow: hidden;
+                            }}
+                            #pdf-container {{
+                                width: 100%;
+                                height: 800px;
+                                overflow: auto;
+                                border: 2px solid #ddd;
+                                border-radius: 5px;
+                                background: #525659;
+                            }}
+                            canvas {{
+                                display: block;
+                                margin: 10px auto;
+                                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                            }}
+                            .controls {{
+                                position: sticky;
+                                top: 0;
+                                background: white;
+                                padding: 10px;
+                                border-bottom: 2px solid #ddd;
+                                text-align: center;
+                                z-index: 100;
+                            }}
+                            button {{
+                                margin: 0 5px;
+                                padding: 8px 16px;
+                                background: #8B0000;
+                                color: white;
+                                border: none;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                font-size: 14px;
+                            }}
+                            button:hover {{
+                                background: #A00000;
+                            }}
+                            #page-info {{
+                                display: inline-block;
+                                margin: 0 10px;
+                                font-weight: bold;
+                            }}
+                        </style>
+                        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+                    </head>
+                    <body>
+                        <div id="pdf-container">
+                            <div class="controls">
+                                <button id="prev-page">◀ Précédent</button>
+                                <span id="page-info">Page <span id="page-num">1</span> / <span id="page-count">?</span></span>
+                                <button id="next-page">Suivant ▶</button>
+                                <button id="zoom-in">🔍 Zoom +</button>
+                                <button id="zoom-out">🔍 Zoom -</button>
+                            </div>
+                            <canvas id="pdf-canvas"></canvas>
+                        </div>
+                        
+                        <script>
+                            const pdfData = atob('{pdf_base64}');
+                            const pdfBytes = new Uint8Array(pdfData.length);
+                            for (let i = 0; i < pdfData.length; i++) {{
+                                pdfBytes[i] = pdfData.charCodeAt(i);
+                            }}
+                            
+                            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                            
+                            let pdfDoc = null;
+                            let pageNum = 1;
+                            let pageRendering = false;
+                            let pageNumPending = null;
+                            let scale = 1.5;
+                            const canvas = document.getElementById('pdf-canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            function renderPage(num) {{
+                                pageRendering = true;
+                                pdfDoc.getPage(num).then(function(page) {{
+                                    const viewport = page.getViewport({{scale: scale}});
+                                    canvas.height = viewport.height;
+                                    canvas.width = viewport.width;
+                                    
+                                    const renderContext = {{
+                                        canvasContext: ctx,
+                                        viewport: viewport
+                                    }};
+                                    
+                                    const renderTask = page.render(renderContext);
+                                    renderTask.promise.then(function() {{
+                                        pageRendering = false;
+                                        if (pageNumPending !== null) {{
+                                            renderPage(pageNumPending);
+                                            pageNumPending = null;
+                                        }}
+                                    }});
+                                }});
+                                
+                                document.getElementById('page-num').textContent = num;
+                            }}
+                            
+                            function queueRenderPage(num) {{
+                                if (pageRendering) {{
+                                    pageNumPending = num;
+                                }} else {{
+                                    renderPage(num);
+                                }}
+                            }}
+                            
+                            function onPrevPage() {{
+                                if (pageNum <= 1) return;
+                                pageNum--;
+                                queueRenderPage(pageNum);
+                            }}
+                            
+                            function onNextPage() {{
+                                if (pageNum >= pdfDoc.numPages) return;
+                                pageNum++;
+                                queueRenderPage(pageNum);
+                            }}
+                            
+                            function onZoomIn() {{
+                                scale += 0.25;
+                                queueRenderPage(pageNum);
+                            }}
+                            
+                            function onZoomOut() {{
+                                if (scale <= 0.5) return;
+                                scale -= 0.25;
+                                queueRenderPage(pageNum);
+                            }}
+                            
+                            document.getElementById('prev-page').addEventListener('click', onPrevPage);
+                            document.getElementById('next-page').addEventListener('click', onNextPage);
+                            document.getElementById('zoom-in').addEventListener('click', onZoomIn);
+                            document.getElementById('zoom-out').addEventListener('click', onZoomOut);
+                            
+                            pdfjsLib.getDocument({{data: pdfBytes}}).promise.then(function(pdf) {{
+                                pdfDoc = pdf;
+                                document.getElementById('page-count').textContent = pdf.numPages;
+                                renderPage(pageNum);
+                            }});
+                        </script>
+                    </body>
+                    </html>
+                    '''
+                    
+                    # Afficher le viewer avec composant HTML
+                    import streamlit.components.v1 as components
+                    components.html(pdf_viewer_html, height=850, scrolling=False)
+                    
                 except Exception as e:
-                    st.error(f"Erreur d'affichage du PDF: {e}")
-                    st.info("Utilise le bouton ci-dessus pour ouvrir le fichier directement.")
+                    st.error(f"❌ Erreur d'affichage du PDF: {e}")
+                    st.info("💡 Utilise le bouton 'Ouvrir dans lecteur PDF' ci-dessus.")
                     
                     # Fallback: afficher le texte extrait
                     with st.expander("📄 Voir le texte extrait (moins lisible)"):
                         st.text_area(
                             "Contenu extrait",
-                            value=char.content,
+                            value=char.content[:5000] + ("..." if len(char.content) > 5000 else ""),
                             height=400,
                             key="char_content_fallback",
                             disabled=True
@@ -609,6 +877,9 @@ def build_vectorstore(_config, _documents):
 @st.cache_resource(show_spinner=False)
 def load_vectorstore_only(_config):
     """Charge uniquement la base vectorielle existante (ultra rapide)"""
+    from core.rag import DocumentExtractor
+    from langchain_community.vectorstores import Chroma
+    
     vector_store = VectorStore(_config)
     
     # Placeholder unique
@@ -622,6 +893,14 @@ def load_vectorstore_only(_config):
         persist_directory=str(_config['paths']['db_dir']),
         embedding_function=vector_store.embeddings
     )
+    
+    # IMPORTANT: Créer les métadonnées si elles n'existent pas
+    metadata_file = _config['paths']['db_dir'] / "corpus_metadata.json"
+    if not metadata_file.exists():
+        with main_container.container():
+            st.markdown("### ⚙️ Mise à jour")
+            st.info("Création des métadonnées de suivi...")
+        DocumentExtractor.save_corpus_metadata(_config['paths']['pdf_root'], _config['paths']['db_dir'])
     
     with main_container.container():
         st.markdown("### ✅ Prêt")
@@ -756,7 +1035,7 @@ def main():
     render_sidebar(config)
     
     # Layout principal
-    col_main, col_right = st.columns([3, 1.2])
+    col_main, col_right = st.columns([3, st.session_state.get('char_column_width', 1.2)])
     
     # Colonne principale
     with col_main:
