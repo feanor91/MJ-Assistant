@@ -19,15 +19,27 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         config = yaml.safe_load(f)
     
     # Expand paths
-    base_dir = Path(config['paths']['base_dir']).expanduser()
-    config['paths']['base_dir'] = base_dir
+    base_dir_str = config['paths']['base_dir']
     
-    # Convertir les chemins relatifs en absolus
+    # Si base_dir est "." ou relatif, le résoudre par rapport au répertoire du script
+    if base_dir_str == "." or not Path(base_dir_str).is_absolute():
+        # Obtenir le répertoire où se trouve config.yaml (= répertoire de l'application)
+        app_dir = config_path.parent.absolute()
+        if base_dir_str == ".":
+            base_dir = app_dir
+        else:
+            base_dir = app_dir / base_dir_str
+    else:
+        base_dir = Path(base_dir_str).expanduser()
+    
+    config['paths']['base_dir'] = base_dir.absolute()
+    
+    # Convertir les chemins relatifs en absolus (relatifs à base_dir)
     for key in ['pdf_root', 'char_dir', 'db_dir', 'save_dir', 'memory_dir']:
         if key in config['paths']:
             path = config['paths'][key]
             if not Path(path).is_absolute():
-                config['paths'][key] = base_dir / path
+                config['paths'][key] = (base_dir / path).absolute()
             else:
                 config['paths'][key] = Path(path)
     

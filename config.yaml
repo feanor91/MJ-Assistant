@@ -1,13 +1,13 @@
 # Configuration - Assistant MJ Les Lames du Cardinal
 
-# Chemins (utilise ~ pour home directory, ou chemins absolus)
+# Chemins (relatifs au répertoire de l'application)
 paths:
-  base_dir: "~/LamesMJ"  # Sera étendu au home de l'utilisateur
-  pdf_root: "Data"  # Relatif à base_dir
-  char_dir: "Characters"
-  db_dir: "lames_db"
-  save_dir: "saved_sessions"
-  memory_dir: "memory"
+  base_dir: "."  # Répertoire de l'application (où se trouve app.py)
+  pdf_root: "Data"  # Dossier Data dans le répertoire de l'application
+  char_dir: "Characters"  # Dossier Characters dans le répertoire de l'application
+  db_dir: "lames_db"  # Base vectorielle dans le répertoire de l'application
+  save_dir: "saved_sessions"  # Sessions sauvegardées
+  memory_dir: "memory"  # Mémoire persistante
 
 # Configuration du modèle
 model:

@@ -21,11 +21,20 @@ class Character:
     name: str
     file_path: Path
     content: str
+    is_pdf: bool = False
     
     @property
     def short_preview(self, length: int = 200) -> str:
         """Retourne un aperçu court du contenu"""
         return self.content[:length] + "..." if len(self.content) > length else self.content
+    
+    def get_pdf_base64(self) -> str:
+        """Retourne le PDF encodé en base64 pour affichage dans un iframe"""
+        if self.is_pdf and self.file_path.exists():
+            import base64
+            with open(self.file_path, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+        return ""
 
 
 class CharacterManager:
@@ -64,10 +73,12 @@ class CharacterManager:
             
             try:
                 content = self._load_file(file_path)
+                is_pdf = (file_path.suffix.lower() == ".pdf")
                 characters.append(Character(
                     name=file_path.stem,
                     file_path=file_path,
-                    content=content
+                    content=content,
+                    is_pdf=is_pdf
                 ))
             except Exception as e:
                 print(f"Erreur chargement {file_path.name}: {e}")

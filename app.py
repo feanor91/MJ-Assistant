@@ -5,6 +5,9 @@ Application Streamlit principale - Assistant MJ Les Lames du Cardinal
 
 import sys
 from pathlib import Path
+from datetime import datetime
+import time
+import json
 
 # Ajouter le répertoire parent au path pour les imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -190,13 +193,19 @@ def render_sidebar(config):
     if col1.button("🔄 Recharger"):
         if 'vectordb' in st.session_state:
             del st.session_state['vectordb']
+        st.cache_resource.clear()
         st.rerun()
     
     if col2.button("🗑️ Réinitialiser"):
         vector_store = VectorStore(config)
-        vector_store.reset(st.session_state.db_dir)
+        vector_store.reset(config['paths']['db_dir'])
+        # Supprimer aussi les métadonnées
+        metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
+        if metadata_file.exists():
+            metadata_file.unlink()
         if 'vectordb' in st.session_state:
             del st.session_state['vectordb']
+        st.cache_resource.clear()
         st.success("✅ Base réinitialisée")
         st.rerun()
     
@@ -388,22 +397,75 @@ def render_character_viewer():
     if selected:
         char = char_manager.get_character(selected)
         if char:
-            # Affichage avec options
-            tabs = st.tabs(["📄 Contenu", "ℹ️ Info"])
+            # Vérifier si l'attribut is_pdf existe (compatibilité avec anciens objets)
+            if not hasattr(char, 'is_pdf'):
+                char.is_pdf = (char.file_path.suffix.lower() == ".pdf")
             
-            with tabs[0]:
-                st.text_area(
-                    "Fiche (lecture seule)",
-                    value=char.content,
-                    height=500,
-                    key="char_content",
-                    disabled=True
-                )
-            
-            with tabs[1]:
-                st.write(f"**Fichier:** {char.file_path.name}")
-                st.write(f"**Chemin:** {char.file_path}")
-                st.write(f"**Taille:** {len(char.content)} caractères")
+            # Affichage selon le type de fichier
+            if char.is_pdf:
+                # Affichage du PDF
+                st.markdown(f"**Fichier PDF:** {char.file_path.name}")
+                
+                # Bouton pour ouvrir dans l'explorateur
+                if st.button("📂 Ouvrir dans l'explorateur", key="open_pdf"):
+                    import subprocess
+                    import platform
+                    if platform.system() == 'Windows':
+                        subprocess.run(['explorer', str(char.file_path)])
+                    elif platform.system() == 'Darwin':  # macOS
+                        subprocess.run(['open', str(char.file_path)])
+                    else:  # Linux
+                        subprocess.run(['xdg-open', str(char.file_path)])
+                
+                # Visualiseur PDF intégré
+                try:
+                    # Encoder le PDF en base64
+                    import base64
+                    with open(char.file_path, "rb") as f:
+                        pdf_base64 = base64.b64encode(f.read()).decode()
+                    
+                    if pdf_base64:
+                        pdf_display = f'''
+                        <iframe src="data:application/pdf;base64,{pdf_base64}" 
+                                width="100%" 
+                                height="800" 
+                                type="application/pdf"
+                                style="border: 1px solid #ccc;">
+                        </iframe>
+                        '''
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                    else:
+                        st.error("Impossible de charger le PDF")
+                except Exception as e:
+                    st.error(f"Erreur d'affichage du PDF: {e}")
+                    st.info("Utilise le bouton ci-dessus pour ouvrir le fichier directement.")
+                    
+                    # Fallback: afficher le texte extrait
+                    with st.expander("📄 Voir le texte extrait (moins lisible)"):
+                        st.text_area(
+                            "Contenu extrait",
+                            value=char.content,
+                            height=400,
+                            key="char_content_fallback",
+                            disabled=True
+                        )
+            else:
+                # Affichage texte/markdown
+                tabs = st.tabs(["📄 Contenu", "ℹ️ Info"])
+                
+                with tabs[0]:
+                    st.text_area(
+                        "Fiche (lecture seule)",
+                        value=char.content,
+                        height=500,
+                        key="char_content",
+                        disabled=True
+                    )
+                
+                with tabs[1]:
+                    st.write(f"**Fichier:** {char.file_path.name}")
+                    st.write(f"**Chemin:** {char.file_path}")
+                    st.write(f"**Taille:** {len(char.content)} caractères")
 
 
 def render_memory_display(mode: str):
@@ -442,88 +504,212 @@ def render_memory_display(mode: str):
 # LOGIQUE PRINCIPALE
 # =============================================================================
 
-@st.cache_resource
+# =============================================================================
+# LOGIQUE PRINCIPALE - Chargement intelligent
+# =============================================================================
+
+def check_corpus_changes(config):
+    """Vérifie si le corpus a changé"""
+    from core.rag import DocumentExtractor
+    
+    pdf_root = config['paths']['pdf_root']
+    db_dir = config['paths']['db_dir']
+    
+    needs_reload, reason = DocumentExtractor.check_if_reload_needed(pdf_root, db_dir)
+    
+    return needs_reload, reason
+
+
+@st.cache_resource(show_spinner=False)
 def load_documents(_config):
-    """Charge les documents (cached)"""
+    """Charge les documents (cached) avec progression"""
     extractor = DocumentExtractor()
     max_pages = _config['advanced'].get('max_pdf_pages')
-    return extractor.extract_from_directory(_config['paths']['pdf_root'], max_pages)
+    
+    # Créer un placeholder principal unique
+    main_container = st.empty()
+    
+    with main_container.container():
+        st.markdown("### 📄 Lecture des documents")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+    
+    def progress_callback(current, total, message):
+        """Callback pour afficher la progression"""
+        if total > 0:
+            progress = current / total
+            with main_container.container():
+                st.markdown("### 📄 Lecture des documents")
+                progress_bar.progress(progress)
+                status_text.info(f"📖 Fichier {current}/{total} : {message}")
+    
+    documents = extractor.extract_from_directory(
+        _config['paths']['pdf_root'], 
+        max_pages,
+        progress_callback=progress_callback
+    )
+    
+    # Message de succès
+    if documents:
+        with main_container.container():
+            st.markdown("### ✅ Documents chargés")
+            st.success(f"🎉 {len(documents)} fichiers extraits avec succès")
+        import time
+        time.sleep(1.5)
+    
+    # Nettoyer complètement
+    main_container.empty()
+    
+    return documents
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def build_vectorstore(_config, _documents):
-    """Construit le vectorstore (cached)"""
+    """Construit le vectorstore (cached) avec progression détaillée"""
     vector_store = VectorStore(_config)
-    return vector_store.build_or_load(_documents, _config['paths']['db_dir'])
-
-
-def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources):
-    """Crée ou récupère la chaîne QA (avec cache manuel intelligent)"""
-    # Clé de cache basée sur tous les paramètres
-    cache_key = f"{model}_{mode}_{temp}_{top_p}_{k}_{show_sources}"
     
-    if 'qa_chain_cache_key' not in st.session_state or st.session_state.qa_chain_cache_key != cache_key:
-        # Recréer la chaîne
-        rag_chain = RAGChain(config)
-        retriever = vectordb.as_retriever(search_kwargs={"k": k})
-        
-        qa_chain = rag_chain.create_qa_chain(
-            retriever=retriever,
-            model_name=model,
-            mode="mj" if mode == "MJ immersif" else "encyclo",
-            temperature=temp,
-            top_p=top_p,
-            return_sources=show_sources
-        )
-        
-        st.session_state.qa_chain = qa_chain
-        st.session_state.qa_chain_cache_key = cache_key
-        st.session_state.rag_chain = rag_chain
+    # Créer un placeholder principal unique
+    main_container = st.empty()
     
-    return st.session_state.qa_chain, st.session_state.rag_chain
+    step = [0]  # Liste pour pouvoir modifier dans callback
+    total_steps = 5
+    
+    def progress_callback(message):
+        """Callback pour afficher le statut de création de la base"""
+        step[0] += 1
+        progress = step[0] / total_steps
+        
+        with main_container.container():
+            st.markdown("### ⚙️ Création de la base vectorielle")
+            st.progress(progress)
+            st.info(f"🔧 {message}")
+    
+    result = vector_store.build_or_load(
+        _documents, 
+        _config['paths']['db_dir'],
+        _config['paths']['pdf_root'],
+        progress_callback=progress_callback
+    )
+    
+    # Message final
+    if _documents:
+        num_docs = len(_documents)
+        with main_container.container():
+            st.markdown("### ✅ Base vectorielle prête !")
+            st.success(f"🎉 {num_docs} documents indexés et prêts à l'emploi")
+        import time
+        time.sleep(2)
+    
+    # Nettoyer complètement
+    main_container.empty()
+    
+    return result
 
 
-def process_query(query: str, config, qa_chain, rag_chain, mode: str, level: str = "N/A"):
+@st.cache_resource(show_spinner=False)
+def load_vectorstore_only(_config):
+    """Charge uniquement la base vectorielle existante (ultra rapide)"""
+    vector_store = VectorStore(_config)
+    
+    # Placeholder unique
+    main_container = st.empty()
+    
+    with main_container.container():
+        st.markdown("### ⚡ Chargement rapide")
+        st.info("Utilisation de la base vectorielle existante...")
+    
+    vectordb = Chroma(
+        persist_directory=str(_config['paths']['db_dir']),
+        embedding_function=vector_store.embeddings
+    )
+    
+    with main_container.container():
+        st.markdown("### ✅ Prêt")
+        st.success("Base vectorielle chargée (aucun rechargement nécessaire)")
+    
+    import time
+    time.sleep(1)
+    main_container.empty()
+    
+    return vectordb
+
+
+def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, system_prompt, memory, short_memory, level):
+    """Crée la chaîne QA (doit être recréée à chaque requête car contient la mémoire)"""
+    rag_chain = RAGChain(config)
+    retriever = vectordb.as_retriever(search_kwargs={"k": k})
+    
+    qa_chain = rag_chain.create_qa_chain(
+        retriever=retriever,
+        model_name=model,
+        mode="mj" if mode == "MJ immersif" else "encyclo",
+        temperature=temp,
+        top_p=top_p,
+        return_sources=show_sources,
+        system_prompt=system_prompt,
+        memory=memory,
+        short_memory=short_memory,
+        level=level
+    )
+    
+    return qa_chain, rag_chain
+
+
+def process_query(query: str, config, mode: str, level: str, vectordb):
     """Traite une requête utilisateur"""
     try:
-        # Préparer les paramètres
+        # Prompt système
+        system_prompt = config['prompts']['mj_system' if mode == "MJ immersif" else 'encyclo_system']
+        
+        # Préparer la mémoire selon le mode
         if mode == "MJ immersif":
             memory = st.session_state.mj_memory
             memory_text = memory.format_for_prompt(n=config['memory']['short_memory_context'])
-            short_memory = ""
+            short_memory_text = ""
         else:
             memory = st.session_state.encyclo_memory
             memory_text = ""
-            short_memory = memory.format_for_prompt(
+            short_memory_text = memory.format_for_prompt(
                 n=config['memory']['short_memory_context'],
                 prefix_user="Question",
                 prefix_assistant="Réponse"
             )
         
-        # Prompt système
-        system_prompt = config['prompts']['mj_system' if mode == "MJ immersif" else 'encyclo_system']
-        
-        # Exécuter la requête
-        result = rag_chain.query(
-            qa_chain=qa_chain,
-            question=query,
-            mode="mj" if mode == "MJ immersif" else "encyclo",
+        # Créer la qa_chain avec tous les paramètres intégrés
+        qa_chain, _ = get_qa_chain(
+            config=config,
+            vectordb=vectordb,
+            model=st.session_state.current_model,
+            mode=mode,
+            temp=st.session_state.temperature,
+            top_p=st.session_state.top_p,
+            k=st.session_state.k_retrieval,
+            show_sources=st.session_state.show_sources,
             system_prompt=system_prompt,
             memory=memory_text,
-            level=level,
-            short_memory=short_memory
+            short_memory=short_memory_text,
+            level=level
         )
         
+        # Exécuter la requête (seulement avec query)
+        result = qa_chain({"query": query})
+        # Créer l'objet résultat
+        result_obj = {
+            "response": response_text,
+            "sources": source_docs,
+            "confidence": confidence
+        }
+        
         # Enregistrer dans la mémoire
-        memory.add(query, result['response'])
+        memory.add(query, result_obj['response'])
         
         # Parser la réponse (mode MJ uniquement)
         if mode == "MJ immersif":
-            parsed = ResponseParser.parse(result['response'])
+            parsed = ResponseParser.parse(result_obj['response'])
             st.session_state.game_state.update_from_parsed(parsed)
             st.session_state.timeline.append({
                 "query": query,
-                "response": result['response'],
+                "response": result_obj['response'],
                 "timestamp": datetime.now().isoformat()
             })
         
@@ -541,7 +727,7 @@ def process_query(query: str, config, qa_chain, rag_chain, mode: str, level: str
                 metadata={"auto_save": True}
             )
         
-        return result
+        return result_obj
     
     except Exception as e:
         if hasattr(st.session_state, 'statistics'):
@@ -579,28 +765,70 @@ def main():
             st.markdown("### 🕰️ Timeline de la partie")
             render_timeline()
         
-        # Chargement des documents et vectorstore
-        with st.spinner("🔄 Chargement du corpus..."):
+        # Chargement des documents et vectorstore - LOGIQUE INTELLIGENTE
+        st.markdown("---")
+        
+        # Titre de section visible
+        col_load1, col_load2 = st.columns([1, 4])
+        with col_load1:
+            st.markdown("## 📚")
+        with col_load2:
+            st.markdown("## Chargement du corpus")
+        
+        st.markdown("---")
+        
+        # Vérifier si un rechargement est nécessaire
+        needs_reload, reason = check_corpus_changes(config)
+        
+        if needs_reload:
+            # Afficher pourquoi on recharge
+            st.warning(f"🔄 **Rechargement nécessaire** : {reason}")
+            
+            # Chargement complet avec progression
             documents = load_documents(config)
             
             if not documents:
-                st.warning(f"⚠️ Aucun document trouvé dans {config['paths']['pdf_root']}")
-                st.info("Dépose tes PDFs de règles dans ce dossier.")
+                st.error("❌ **Aucun document trouvé !**")
+                st.warning(f"Vérifie que des PDFs sont présents dans : `{config['paths']['pdf_root']}`")
+                st.info("💡 Dépose tes PDFs de règles dans ce dossier et relance l'application.")
                 st.stop()
             
+            # Construction de la base vectorielle
             vectordb = build_vectorstore(config, documents)
+        else:
+            # Chargement rapide (base existe et corpus inchangé)
+            st.success(f"✅ **{reason}** - Chargement rapide activé !")
             
-            # QA Chain
-            qa_chain, rag_chain = get_qa_chain(
-                config=config,
-                vectordb=vectordb,
-                model=st.session_state.current_model,
-                mode=st.session_state.mode,
-                temp=st.session_state.temperature,
-                top_p=st.session_state.top_p,
-                k=st.session_state.k_retrieval,
-                show_sources=st.session_state.show_sources
-            )
+            # Charger uniquement la base vectorielle (ultra rapide)
+            vectordb = load_vectorstore_only(config)
+            
+            # Lire les métadonnées pour afficher les stats
+            metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
+            if metadata_file.exists():
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        num_docs = metadata.get('total_files', 0)
+                        st.info(f"📊 Base vectorielle contient {num_docs} documents")
+                except Exception:
+                    pass
+        
+        # Afficher stats finales (uniquement si on a rechargé)
+        if needs_reload and 'documents' in locals():
+            st.markdown("---")
+            st.markdown("### 📊 Statistiques du corpus")
+            col_stat1, col_stat2, col_stat3 = st.columns(3)
+            with col_stat1:
+                st.metric("📄 Documents", len(documents), delta="Prêt", delta_color="normal")
+            with col_stat2:
+                total_chars = sum(len(content) for content in documents.values())
+                st.metric("📝 Caractères", f"{total_chars:,}")
+            with col_stat3:
+                # Estimer le nombre de chunks
+                estimated_chunks = total_chars // config['rag']['chunk_size']
+                st.metric("🧩 Chunks estimés", f"~{estimated_chunks:,}")
+        
+        st.markdown("---")
         
         # Zone d'interaction
         st.markdown("### 💬 Interaction")
@@ -641,10 +869,9 @@ def main():
                     result = process_query(
                         query=user_query,
                         config=config,
-                        qa_chain=qa_chain,
-                        rag_chain=rag_chain,
                         mode=st.session_state.mode,
-                        level=level
+                        level=level,
+                        vectordb=vectordb
                     )
                     
                     # Affichage de la réponse
