@@ -1,0 +1,61 @@
+# Configuration - Assistant MJ Les Lames du Cardinal
+
+# Chemins (utilise ~ pour home directory, ou chemins absolus)
+paths:
+  base_dir: "~/LamesMJ"  # Sera étendu au home de l'utilisateur
+  pdf_root: "Data"  # Relatif à base_dir
+  char_dir: "Characters"
+  db_dir: "lames_db"
+  save_dir: "saved_sessions"
+  memory_dir: "memory"
+
+# Configuration du modèle
+model:
+  default: "mistral-nemo"
+  temperature: 0.0
+  top_p: 1.0
+  fallback_models:
+    - "llama3"
+    - "mistral"
+    - "phi3"
+
+# Configuration RAG
+rag:
+  embedding_model: "all-MiniLM-L6-v2"
+  k_retrieval: 6
+  chunk_size: 1000
+  chunk_overlap: 150
+  use_cuda: true  # Tente d'utiliser CUDA si disponible
+
+# Configuration de la mémoire
+memory:
+  max_mj_memory: 30  # Nombre max d'échanges à garder en mémoire MJ
+  max_encyclo_memory: 10  # Nombre max pour mode encyclopédique
+  short_memory_context: 3  # Nombre d'échanges récents à inclure dans le prompt
+
+# Configuration UI
+ui:
+  default_mode: "MJ immersif"  # ou "Encyclopédique"
+  show_sources_default: false
+  timeline_enabled: true
+  auto_save_interval: 5  # Sauvegarde auto tous les N messages
+
+# Prompts (peuvent être personnalisés)
+prompts:
+  mj_system: |
+    Tu es le Maître de Jeu des Lames du Cardinal.
+    Tu dois répondre **uniquement** à partir des extraits fournis ci-dessous.
+    Si l'information n'existe pas dans le contexte, réponds exactement : "Aucune information trouvée dans le corpus."
+    N'invente JAMAIS d'informations.
+    
+  encyclo_system: |
+    Tu es une encyclopédie du jeu 'Les Lames du Cardinal'.
+    Réponds uniquement selon le contenu des extraits fournis.
+    Si aucune information n'est trouvée, réponds exactement : "Aucune information trouvée dans le corpus."
+    Ne crée jamais d'informations de toutes pièces.
+
+# Options avancées
+advanced:
+  max_pdf_pages: 500  # Limite de pages par PDF pour éviter les timeouts
+  enable_statistics: true  # Active les statistiques de session
+  export_format: "markdown"  # markdown ou pdf

@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Application principale
+  mj-assistant:
+    build: .
+    container_name: lames-mj-assistant
+    ports:
+      - "8501:8501"
+    volumes:
+      # Monter les données persistantes
+      - ./data/Data:/data/Data
+      - ./data/Characters:/data/Characters
+      - ./data/lames_db:/data/lames_db
+      - ./data/saved_sessions:/data/saved_sessions
+      - ./data/memory:/data/memory
+      # Config
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    networks:
+      - mj-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Si tu as un GPU NVIDIA
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Optionnel: Ollama en container (si pas installé localement)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama-server
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   networks:
+  #     - mj-network
+  #   restart: unless-stopped
+  #   # Pour GPU NVIDIA
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: 1
+  #   #           capabilities: [gpu]
+
+networks:
+  mj-network:
+    driver: bridge
+
+volumes:
+  ollama-data:
+    driver: local
+
+# Pour démarrer:
+# docker-compose up -d
+
+# Pour voir les logs:
+# docker-compose logs -f mj-assistant
+
+# Pour arrêter:
+# docker-compose down
+
+# Pour reconstruire:
+# docker-compose up -d --build
