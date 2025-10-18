@@ -21,6 +21,10 @@ Assistant intelligent pour Maître de Jeu utilisant RAG (Retrieval-Augmented Gen
 2. **Ollama** installé et en cours d'exécution
    - Installation : https://ollama.ai
    - Télécharger au moins un modèle : `ollama pull mistral-nemo`
+3. **Poppler** (pour l'affichage PDF dans la sidebar)
+   - Windows : Télécharger depuis https://github.com/oschwartz10612/poppler-windows/releases
+   - Linux : `sudo apt-get install poppler-utils`
+   - macOS : `brew install poppler`
 
 ## 🚀 Installation
 
@@ -46,7 +50,27 @@ venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 ```
 
-### 4. Installer PyTorch (optionnel, pour GPU)
+### 4. Installer et configurer Poppler (Windows uniquement)
+
+**Sur Windows**, Poppler doit être installé manuellement :
+
+1. **Télécharger** : https://github.com/oschwartz10612/poppler-windows/releases/latest
+2. **Extraire** dans un dossier (ex: `C:\poppler` ou `D:\IA\poppler-XX.XX.X`)
+3. **Configurer le chemin** dans `app.py` (ligne 251) :
+   ```python
+   poppler_path = r"D:\IA\poppler-25.07.0\Library\bin"
+   ```
+
+**Sur Linux/macOS**, Poppler s'installe via le gestionnaire de paquets :
+```bash
+# Linux
+sudo apt-get install poppler-utils
+
+# macOS
+brew install poppler
+```
+
+### 5. Installer PyTorch (optionnel, pour GPU)
 
 Pour accélérer les embeddings avec GPU :
 
@@ -61,7 +85,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-### 5. Structure des dossiers
+### 6. Structure des dossiers
 
 Créer la structure suivante (ou laisser l'app la créer automatiquement) :
 
@@ -74,7 +98,7 @@ Créer la structure suivante (ou laisser l'app la créer automatiquement) :
 └── memory/                # Mémoire persistante
 ```
 
-### 6. Configuration
+### 7. Configuration
 
 Éditer `config.yaml` selon vos besoins :
 
@@ -120,25 +144,31 @@ L'application s'ouvre dans votre navigateur par défaut.
 
 ### Interface
 
-**Sidebar (gauche)**
+**Sidebar (gauche) - Fiches de personnages**
+- Sélecteur de personnage (PDF, TXT, MD)
+- Boutons Ouvrir et Télécharger
+- **Visualiseur PDF intégré** avec navigation par page (◀ Page X/Y ▶)
+- Affichage haute résolution (200 DPI)
+- Redimensionnable avec diviseur natif Streamlit
+
+**Zone principale (centre) - Jeu**
+- Timeline interactive (mode MJ)
+- Chargement du corpus et statistiques
+- Zone d'interaction avec le MJ
+- Sélection du niveau de narration (Résumé/Détaillé/Immersive)
+- Affichage des réponses avec sources RAG
+- Historique de la mémoire
+
+**Colonne droite - Configuration**
 - Sélection du modèle Ollama
-- Choix du mode
+- Choix du mode (MJ immersif / Encyclopédique)
+- Options d'affichage (sources RAG)
 - Réglages experts (température, top-p, k retrieval)
-- Gestion de la base vectorielle
+- Gestion de la base vectorielle (Recharger/Réinitialiser)
 - Sauvegarde/chargement de sessions
-- Statistiques
-- État du jeu (mode MJ)
-
-**Zone principale (centre)**
-- Timeline (mode MJ)
-- Zone d'interaction
-- Sélection du niveau de narration
-- Historique des échanges
-- Affichage de la mémoire
-
-**Panneau droit**
-- Visualisation des fiches de personnages
-- Recherche dans les fiches
+- Export Markdown
+- Statistiques de session
+- État du jeu (PNJ, lieux, intrigues)
 
 ### Raccourcis
 
@@ -216,13 +246,42 @@ ollama list
 ollama pull mistral-nemo
 ```
 
+### PDF ne s'affiche pas dans la sidebar
+
+**Erreur : "pdf2image non installé ou Poppler manquant"**
+
+1. **Vérifier que pdf2image est installé dans le bon environnement** :
+   ```bash
+   # Activer le venv si nécessaire
+   venv\Scripts\activate  # Windows
+
+   # Installer pdf2image
+   pip install pdf2image
+   ```
+
+2. **Vérifier que Poppler est installé** :
+   - Windows : Télécharger depuis https://github.com/oschwartz10612/poppler-windows/releases
+   - Extraire dans un dossier (ex: `D:\IA\poppler-25.07.0`)
+   - Vérifier que le dossier `Library\bin` contient des fichiers `.exe`
+
+3. **Configurer le chemin dans `app.py`** (ligne 251) :
+   ```python
+   poppler_path = r"D:\IA\poppler-25.07.0\Library\bin"  # Votre chemin
+   ```
+
+4. **Redémarrer Streamlit** :
+   ```bash
+   # Arrêter Streamlit (Ctrl+C)
+   streamlit run app.py
+   ```
+
 ### Erreur de mémoire GPU
 - Réduire la taille du modèle
 - Utiliser CPU : `use_cuda: false` dans `config.yaml`
 - Réduire `k_retrieval`
 
 ### Base vectorielle corrompue
-- Cliquer sur "🗑️ Réinitialiser" dans la sidebar
+- Cliquer sur "🗑️ Réinitialiser" dans la colonne Configuration
 - Ou supprimer manuellement le dossier `lames_db/`
 
 ### Import errors
@@ -230,6 +289,10 @@ ollama pull mistral-nemo
 # Réinstaller les dépendances
 pip install --force-reinstall -r requirements.txt
 ```
+
+### Erreur "name 'response_text' is not defined"
+- Cette erreur a été corrigée dans la version actuelle
+- Assurez-vous d'avoir la dernière version du code
 
 ## 🎯 Améliorations futures
 

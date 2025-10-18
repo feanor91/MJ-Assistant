@@ -66,9 +66,33 @@ lames-cardinal-mj/
 **Fonctions clés** :
 - `init_app()` : Initialisation
 - `init_session_state()` : État de session
-- `render_sidebar()` : Sidebar
+- `render_sidebar()` : Affichage fiches de personnages dans sidebar
+- `render_config_panel()` : Panneau de configuration (colonne droite)
+- `render_session_manager()` : Gestion des sessions
+- `render_statistics()` : Affichage statistiques
+- `render_game_state()` : État du jeu (PNJ, lieux, intrigues)
+- `render_timeline()` : Timeline interactive
+- `render_memory_display()` : Affichage mémoire
 - `process_query()` : Traitement des requêtes
 - `main()` : Boucle principale
+
+**Organisation de l'interface (v2.1.0)** :
+```
+┌──────────────────┬────────────────────────────┬─────────────┐
+│   SIDEBAR        │    ZONE PRINCIPALE         │   CONFIG    │
+│   (Gauche)       │      (Centre)              │  (Droite)   │
+│  Redimensionnable│                            │             │
+├──────────────────┼────────────────────────────┼─────────────┤
+│ 📇 Fiches perso  │ 🗡️ Titre                  │ ⚙️ Config   │
+│ [Sélecteur]      │ 🕰️ Timeline               │ Modèle      │
+│ 📂 Ouvrir        │ 📚 Chargement corpus       │ Mode        │
+│ 💾 Télécharger   │ 💬 Interaction             │ Affichage   │
+│ ◀ Page X/Y ▶    │ ✅ Réponse                 │ 🔧 Experts  │
+│ [PDF IMAGE]      │ 🧾 Mémoire                 │ 💾 Sessions │
+│  200 DPI         │                            │ 📊 Stats    │
+│                  │                            │ 🎮 État jeu │
+└──────────────────┴────────────────────────────┴─────────────┘
+```
 
 #### `config.yaml` (Configuration)
 **Rôle** : Configuration centralisée
@@ -91,7 +115,8 @@ lames-cardinal-mj/
 - Core : streamlit, pyyaml
 - LangChain : langchain, langchain-community, langchain-ollama
 - RAG : chromadb, sentence-transformers
-- PDF : pdfplumber, PyPDF2
+- PDF extraction : pdfplumber, PyPDF2
+- PDF rendering : pdf2image, Pillow (nécessite Poppler)
 - Visualisation : plotly, pandas
 - Optionnel : torch (GPU)
 

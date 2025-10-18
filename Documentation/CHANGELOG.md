@@ -5,6 +5,91 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [2.1.0] - 2025-10-18
+
+### ✨ Ajouté
+
+#### Interface utilisateur
+- **Réorganisation complète de l'interface**
+  - Fiches de personnages déplacées dans la **sidebar gauche** (redimensionnable)
+  - Configuration déplacée dans une **colonne droite** compacte
+  - Zone principale au centre pour le contenu du jeu
+  - Titre compact en une ligne pour maximiser l'espace vertical
+  - Ratio colonnes optimisé : 4:1 (contenu:config)
+
+- **Visualiseur PDF dans la sidebar**
+  - Affichage PDF haute résolution (200 DPI) directement dans la sidebar
+  - Navigation par page avec boutons ◀ ▶
+  - Indicateur de page (Page X/Y)
+  - Conversion PDF → Image avec **pdf2image** et **Poppler**
+  - Support des fiches de personnages PDF
+
+#### Dépendances
+- `pdf2image>=1.16.0` pour la conversion PDF en images
+- `Pillow>=10.0.0` pour la manipulation d'images
+- Support de Poppler (Windows/Linux/macOS)
+
+### 🔧 Modifié
+
+#### Architecture
+- Sidebar désormais dédiée aux fiches de personnages
+- Configuration accessible via colonne droite (non intrusive)
+- Amélioration de l'organisation visuelle
+- Suppression du système de colonnes avec slider
+
+#### Code
+- Refactorisation de `render_sidebar()` pour afficher les personnages
+- Nouvelle fonction `render_config_panel()` pour la configuration
+- Adaptation de `render_session_manager()`, `render_statistics()`, `render_game_state()` pour colonne normale
+- Configuration du chemin Poppler dans le code
+
+### 🐛 Corrigé
+
+#### Bugs critiques
+- ❌ **Erreur `name 'response_text' is not defined`** dans `process_query()`
+  - Ajout de l'extraction des valeurs du résultat `qa_chain`
+  - Calcul de la confiance basé sur les scores des documents
+  - Création correcte de l'objet `result_obj`
+
+#### Problèmes d'affichage
+- Duplication du sélecteur de personnages (corrigé)
+- `components.html()` ne fonctionnant pas dans la sidebar (contourné avec pdf2image)
+- Variables inutilisées (`char_column_width`) retirées
+
+### 📚 Documentation
+
+- **README.md mis à jour**
+  - Ajout de Poppler dans les prérequis
+  - Instructions d'installation de Poppler (Windows/Linux/macOS)
+  - Nouvelle section interface avec description de la sidebar, zone principale et colonne config
+  - Section dépannage enrichie avec erreurs PDF/Poppler
+
+- **CHANGELOG.md** : Documentation de la version 2.1.0
+- **requirements.txt** : Ajout de pdf2image et Pillow
+
+### 🔄 Migration depuis 2.0.0
+
+Si vous migrez depuis la version 2.0.0 :
+
+1. **Installer les nouvelles dépendances** :
+   ```bash
+   pip install pdf2image Pillow
+   ```
+
+2. **Installer Poppler** :
+   - Windows : https://github.com/oschwartz10612/poppler-windows/releases
+   - Linux : `sudo apt-get install poppler-utils`
+   - macOS : `brew install poppler`
+
+3. **Configurer le chemin Poppler** dans `app.py` (ligne 251) si nécessaire
+
+4. **Relancer Streamlit** :
+   ```bash
+   streamlit run app.py
+   ```
+
+---
+
 ## [2.0.0] - 2025-01-XX
 
 ### 🎉 Refonte majeure complète

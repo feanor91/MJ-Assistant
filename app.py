@@ -113,10 +113,7 @@ def init_session_state(config):
         # Compteur pour auto-save
         st.session_state.message_count = 0
         st.session_state.auto_save_interval = config['ui'].get('auto_save_interval', 5)
-        
-        # Largeur de la colonne personnages (par défaut 1.2)
-        st.session_state.char_column_width = 1.2
-        
+
         st.session_state.initialized = True
 
 
@@ -124,51 +121,227 @@ def init_session_state(config):
 # INTERFACE UTILISATEUR
 # =============================================================================
 
-def render_sidebar(config):
-    """Affiche la sidebar"""
-    st.sidebar.title("⚙️ Configuration")
-    
+def render_sidebar():
+    """Affiche la sidebar avec les fiches de personnages"""
+    st.sidebar.title("📇 Fiches de personnage")
+
+    char_manager = st.session_state.char_manager
+    char_manager.refresh()
+
+    characters = char_manager.characters
+
+    if not characters:
+        st.sidebar.info(f"Aucune fiche trouvée dans {st.session_state.char_dir}")
+        st.sidebar.caption("Dépose des fichiers .txt, .md ou .pdf dans ce dossier.")
+        return
+
+    # Sélection - SAUVEGARDER la sélection dans session_state
+    char_names = [""] + char_manager.get_character_names()
+
+    # Récupérer la dernière sélection
+    default_index = 0
+    if 'selected_character' in st.session_state:
+        try:
+            default_index = char_names.index(st.session_state.selected_character)
+        except ValueError:
+            default_index = 0
+
+    selected = st.sidebar.selectbox(
+        "Choisir un personnage:",
+        char_names,
+        index=default_index,
+        key="char_selector"
+    )
+
+    # Sauvegarder la sélection
+    if selected:
+        st.session_state.selected_character = selected
+
+    st.sidebar.markdown("---")
+
+    if selected:
+        char = char_manager.get_character(selected)
+        if char:
+            # Vérifier si l'attribut is_pdf existe (compatibilité avec anciens objets)
+            if not hasattr(char, 'is_pdf'):
+                char.is_pdf = (char.file_path.suffix.lower() == ".pdf")
+
+            # Affichage selon le type de fichier
+            if char.is_pdf:
+                # Affichage du PDF
+                st.sidebar.markdown(f"**📄 Fichier:** {char.file_path.name}")
+
+                col1, col2 = st.sidebar.columns([1, 1])
+
+                with col1:
+                    # Bouton pour ouvrir dans l'explorateur
+                    if st.button("📂 Ouvrir", key="open_pdf", use_container_width=True):
+                        import subprocess
+                        import platform
+                        if platform.system() == 'Windows':
+                            import os
+                            os.startfile(str(char.file_path))
+                        elif platform.system() == 'Darwin':  # macOS
+                            subprocess.run(['open', str(char.file_path)])
+                        else:  # Linux
+                            subprocess.run(['xdg-open', str(char.file_path)])
+
+                with col2:
+                    # Bouton de téléchargement
+                    try:
+                        with open(char.file_path, "rb") as f:
+                            pdf_bytes = f.read()
+                        st.download_button(
+                            label="💾 Télécharger",
+                            data=pdf_bytes,
+                            file_name=char.file_path.name,
+                            mime="application/pdf",
+                            key="download_pdf",
+                            use_container_width=True
+                        )
+                    except Exception:
+                        pass
+
+                st.sidebar.markdown("---")
+
+                # Visualiseur PDF dans la sidebar - convertir en image avec pdf2image
+                try:
+                    # Initialiser la page courante
+                    if 'pdf_page' not in st.session_state:
+                        st.session_state.pdf_page = 1
+
+                    # Compter les pages et convertir en images
+                    try:
+                        from pdf2image import convert_from_path
+                        from PIL import Image
+                        import PyPDF2
+
+                        # Compter le nombre de pages
+                        with open(char.file_path, "rb") as f:
+                            pdf_reader = PyPDF2.PdfReader(f)
+                            total_pages = len(pdf_reader.pages)
+
+                        # S'assurer que la page courante est valide
+                        if st.session_state.pdf_page > total_pages:
+                            st.session_state.pdf_page = total_pages
+                        if st.session_state.pdf_page < 1:
+                            st.session_state.pdf_page = 1
+
+                        # Contrôles de navigation dans la sidebar
+                        col_prev, col_info, col_next = st.sidebar.columns([1, 2, 1])
+
+                        with col_prev:
+                            if st.button("◀", key="pdf_prev", use_container_width=True, disabled=(st.session_state.pdf_page <= 1)):
+                                st.session_state.pdf_page -= 1
+                                st.rerun()
+
+                        with col_info:
+                            st.markdown(f"<center>Page {st.session_state.pdf_page}/{total_pages}</center>", unsafe_allow_html=True)
+
+                        with col_next:
+                            if st.button("▶", key="pdf_next", use_container_width=True, disabled=(st.session_state.pdf_page >= total_pages)):
+                                st.session_state.pdf_page += 1
+                                st.rerun()
+
+                        # Convertir uniquement la page courante en image (plus rapide)
+                        # DPI 200 pour une bonne qualité
+
+                        # Chemin Poppler
+                        import os
+                        poppler_path = r"D:\IA\poppler-25.07.0\Library\bin"
+
+                        # Vérifier si Poppler existe à cet endroit
+                        if os.path.exists(poppler_path):
+                            images = convert_from_path(
+                                str(char.file_path),
+                                dpi=200,
+                                first_page=st.session_state.pdf_page,
+                                last_page=st.session_state.pdf_page,
+                                poppler_path=poppler_path
+                            )
+                        else:
+                            # Essayer sans spécifier le chemin (au cas où Poppler est dans le PATH)
+                            images = convert_from_path(
+                                str(char.file_path),
+                                dpi=200,
+                                first_page=st.session_state.pdf_page,
+                                last_page=st.session_state.pdf_page
+                            )
+
+                        if images:
+                            # Afficher l'image dans la sidebar
+                            st.sidebar.image(images[0], use_container_width=True)
+
+                    except ImportError as e:
+                        st.sidebar.error(f"❌ Import Error: {e}")
+                        st.sidebar.info("1. Installe pdf2image: pip install pdf2image")
+                        st.sidebar.info("2. Vérifie que Poppler est dans: D:\\IA\\poppler-25.07.0\\Library\\bin")
+                        st.sidebar.info("💡 En attendant, utilise le bouton 'Ouvrir' ci-dessus.")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Erreur détaillée: {type(e).__name__}: {e}")
+                        st.sidebar.code(f"Chemin Poppler: {poppler_path}")
+                        st.sidebar.code(f"Poppler existe: {os.path.exists(poppler_path)}")
+                        st.sidebar.info("💡 Utilise le bouton 'Ouvrir' ci-dessus.")
+
+                except Exception as e:
+                    st.sidebar.error(f"❌ Erreur: {e}")
+                    st.sidebar.info("💡 Utilise le bouton 'Ouvrir' ci-dessus.")
+            else:
+                # Affichage texte/markdown
+                st.sidebar.text_area(
+                    "Fiche (lecture seule)",
+                    value=char.content,
+                    height=600,
+                    key="char_content_sidebar",
+                    disabled=True
+                )
+
+
+def render_config_panel(config):
+    """Affiche le panneau de configuration dans la colonne de droite"""
+    st.markdown("### ⚙️ Configuration")
+
     # Sélection du modèle
-    st.sidebar.subheader("Modèle")
+    st.markdown("**Modèle**")
     models = get_ollama_models()
-    
+
     try:
         default_idx = models.index(st.session_state.current_model)
     except ValueError:
         default_idx = 0
-    
-    selected_model = st.sidebar.selectbox(
+
+    selected_model = st.selectbox(
         "Choisir le modèle:",
         models,
         index=default_idx,
         key="model_selector"
     )
-    
+
     if selected_model != st.session_state.current_model:
         st.session_state.current_model = selected_model
         # Invalider le cache QA
         if 'qa_chain' in st.session_state:
             del st.session_state['qa_chain']
-    
+
     # Mode
-    st.sidebar.subheader("Mode")
-    mode = st.sidebar.radio(
+    st.markdown("**Mode**")
+    mode = st.radio(
         "Mode de jeu:",
         ["MJ immersif", "Encyclopédique"],
         index=0 if st.session_state.mode == "MJ immersif" else 1
     )
     st.session_state.mode = mode
-    
+
     # Options d'affichage
-    st.sidebar.subheader("Affichage")
-    st.session_state.show_sources = st.sidebar.checkbox(
+    st.markdown("**Affichage**")
+    st.session_state.show_sources = st.checkbox(
         "Afficher les sources RAG",
         value=st.session_state.show_sources
     )
-    
+
     # Réglages experts
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("🔧 Réglages experts"):
+    st.markdown("---")
+    with st.expander("🔧 Réglages experts"):
         st.session_state.temperature = st.slider(
             "Température",
             0.0, 1.5,
@@ -186,20 +359,20 @@ def render_sidebar(config):
             1, 12,
             st.session_state.k_retrieval
         )
-    
+
     # Gestion de la base vectorielle
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Base de données")
-    
-    col1, col2 = st.sidebar.columns(2)
-    
-    if col1.button("🔄 Recharger"):
+    st.markdown("---")
+    st.markdown("**Base de données**")
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("🔄 Recharger", use_container_width=True):
         if 'vectordb' in st.session_state:
             del st.session_state['vectordb']
         st.cache_resource.clear()
         st.rerun()
-    
-    if col2.button("🗑️ Réinitialiser"):
+
+    if col2.button("🗑️ Réinitialiser", use_container_width=True):
         vector_store = VectorStore(config)
         vector_store.reset(config['paths']['db_dir'])
         # Supprimer aussi les métadonnées
@@ -211,36 +384,38 @@ def render_sidebar(config):
         st.cache_resource.clear()
         st.success("✅ Base réinitialisée")
         st.rerun()
-    
+
     # Gestion des sessions
+    st.markdown("---")
     render_session_manager()
-    
+
     # Statistiques
     if config['advanced'].get('enable_statistics', True):
+        st.markdown("---")
         render_statistics()
-    
+
     # État du jeu (mode MJ uniquement)
     if mode == "MJ immersif":
+        st.markdown("---")
         render_game_state()
 
 
 def render_session_manager():
     """Affiche le gestionnaire de sessions"""
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💾 Sessions")
-    
+    st.markdown("**💾 Sessions**")
+
     session_manager = st.session_state.session_manager
     sessions = session_manager.list_sessions()
-    
+
     # Sauvegarder
-    session_name = st.sidebar.text_input(
+    session_name = st.text_input(
         "Nom de session",
         value="default",
         key="session_name_input"
     )
-    
-    col1, col2 = st.sidebar.columns(2)
-    
+
+    col1, col2 = st.columns(2)
+
     if col1.button("💾 Sauver", use_container_width=True):
         success = session_manager.save_session(
             session_name=session_name,
@@ -253,43 +428,43 @@ def render_session_manager():
             }
         )
         if success:
-            st.sidebar.success(f"✅ Session '{session_name}' sauvegardée")
+            st.success(f"✅ Session '{session_name}' sauvegardée")
         else:
-            st.sidebar.error("❌ Erreur lors de la sauvegarde")
-    
+            st.error("❌ Erreur lors de la sauvegarde")
+
     # Charger
     if sessions:
-        selected_session = st.sidebar.selectbox(
+        selected_session = st.selectbox(
             "Charger une session:",
             [""] + sessions,
             key="session_loader"
         )
-        
+
         if col2.button("📂 Charger", use_container_width=True) and selected_session:
             data = session_manager.load_session(selected_session)
             if data:
                 # Restaurer la mémoire
                 st.session_state.mj_memory.entries = data['mj_entries']
                 st.session_state.encyclo_memory.entries = data['encyclo_entries']
-                
+
                 # Restaurer l'état du jeu
                 if 'game_state' in data.get('metadata', {}):
                     st.session_state.game_state.from_dict(data['metadata']['game_state'])
-                
+
                 # Restaurer les paramètres
                 metadata = data.get('metadata', {})
                 if 'mode' in metadata:
                     st.session_state.mode = metadata['mode']
                 if 'model' in metadata:
                     st.session_state.current_model = metadata['model']
-                
-                st.sidebar.success(f"✅ Session '{selected_session}' chargée")
+
+                st.success(f"✅ Session '{selected_session}' chargée")
                 st.rerun()
             else:
-                st.sidebar.error("❌ Impossible de charger la session")
-    
+                st.error("❌ Impossible de charger la session")
+
     # Export
-    if st.sidebar.button("📄 Exporter en Markdown", use_container_width=True):
+    if st.button("📄 Exporter en Markdown", use_container_width=True):
         export_path = st.session_state.config['paths']['save_dir'] / f"{session_name}_export.md"
         success = export_session_to_markdown(
             mj_memory=[e.to_dict() for e in st.session_state.mj_memory.entries],
@@ -298,49 +473,48 @@ def render_session_manager():
             output_path=export_path
         )
         if success:
-            st.sidebar.success(f"✅ Exporté vers {export_path.name}")
+            st.success(f"✅ Exporté vers {export_path.name}")
         else:
-            st.sidebar.error("❌ Erreur lors de l'export")
+            st.error("❌ Erreur lors de l'export")
 
 
 def render_statistics():
     """Affiche les statistiques"""
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Statistiques")
-    
+    st.markdown("**📊 Statistiques**")
+
     stats = st.session_state.statistics.get_summary()
-    
-    st.sidebar.metric("Requêtes totales", stats['total_queries'])
-    st.sidebar.metric("Taux de succès", f"{stats['success_rate']:.1f}%")
-    st.sidebar.metric("Durée session", stats['session_duration'])
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Requêtes", stats['total_queries'])
+    col2.metric("Succès", f"{stats['success_rate']:.1f}%")
+    col3.metric("Durée", stats['session_duration'])
 
 
 def render_game_state():
     """Affiche l'état du jeu"""
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🎮 État du jeu")
-    
+    st.markdown("**🎮 État du jeu**")
+
     game_state = st.session_state.game_state
-    
+
     if game_state.npcs:
-        st.sidebar.markdown("**PNJ:**")
+        st.markdown("**PNJ:**")
         for name, status in list(game_state.npcs.items())[:5]:
             icon = game_state.get_npc_icon(status)
-            st.sidebar.text(f"{icon} {name}")
-    
+            st.text(f"{icon} {name}")
+
     if game_state.locations:
-        st.sidebar.markdown("**Lieux:**")
+        st.markdown("**Lieux:**")
         for name, status in list(game_state.locations.items())[:5]:
             icon = game_state.get_location_icon(status)
-            st.sidebar.text(f"{icon} {name}")
-    
+            st.text(f"{icon} {name}")
+
     if game_state.intrigues:
-        st.sidebar.markdown("**Intrigues:**")
+        st.markdown("**Intrigues:**")
         for name, status in list(game_state.intrigues.items())[:3]:
             icon = game_state.get_intrigue_icon(status)
-            st.sidebar.text(f"{icon} {name}")
-    
-    if st.sidebar.button("🗑️ Réinitialiser état", use_container_width=True):
+            st.text(f"{icon} {name}")
+
+    if st.button("🗑️ Réinitialiser état", use_container_width=True):
         game_state.clear()
         st.rerun()
 
@@ -375,89 +549,24 @@ def render_timeline():
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_character_viewer():
+def render_character_viewer_old():
     """Affiche le visualiseur de fiches de personnages"""
-    
-    # Slider de redimensionnement toujours visible en haut
-    current_width = st.session_state.get('char_column_width', 1.2)
-    
+
     st.markdown("### 📇 Fiches de personnage")
-    
-    # Slider horizontal avec style personnalisé
-    st.markdown("""
-    <style>
-    div[data-testid="stSlider"] {
-        padding-top: 0px;
-        padding-bottom: 10px;
-    }
-    div[data-testid="stSlider"] > label {
-        font-size: 0.8rem;
-        color: #888;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    col_slider, col_btns = st.columns([4, 1])
-    
-    with col_slider:
-        col_width = st.slider(
-            "↔️ Glisse pour ajuster la largeur",
-            min_value=0.5,
-            max_value=3.0,
-            value=current_width,
-            step=0.05,
-            format="%.2f",
-            help="Glisse le curseur pour redimensionner la colonne en temps réel",
-            key="width_slider"
-        )
-        
-        if col_width != current_width:
-            st.session_state.char_column_width = col_width
-            st.rerun()
-    
-    with col_btns:
-        btn_col1, btn_col2 = st.columns(2)
-        with btn_col1:
-            # ◀ agrandit (pousse vers la gauche)
-            if st.button("◀", key="increase_width_btn", help="Agrandir", use_container_width=True):
-                new_width = min(3.0, current_width + 0.2)
-                st.session_state.char_column_width = new_width
-                st.rerun()
-        with btn_col2:
-            # ▶ réduit (pousse vers la droite)
-            if st.button("▶", key="decrease_width_btn", help="Réduire", use_container_width=True):
-                new_width = max(0.5, current_width - 0.2)
-                st.session_state.char_column_width = new_width
-                st.rerun()
-    
-    # Indicateur visuel de la taille
-    size_info = ""
-    if current_width < 1.0:
-        size_info = "📱 Compact"
-    elif current_width < 1.5:
-        size_info = "📄 Normal"
-    elif current_width < 2.5:
-        size_info = "📖 Large"
-    else:
-        size_info = "🖥️ Maximum"
-    
-    st.caption(f"Taille actuelle : {size_info}")
-    
-    st.markdown("---")
-    
+
     char_manager = st.session_state.char_manager
     char_manager.refresh()
-    
+
     characters = char_manager.characters
-    
+
     if not characters:
         st.info(f"Aucune fiche trouvée dans {st.session_state.char_dir}")
         st.caption("Dépose des fichiers .txt, .md ou .pdf dans ce dossier.")
         return
-    
+
     # Sélection - SAUVEGARDER la sélection dans session_state
     char_names = [""] + char_manager.get_character_names()
-    
+
     # Récupérer la dernière sélection
     default_index = 0
     if 'selected_character' in st.session_state:
@@ -465,32 +574,19 @@ def render_character_viewer():
             default_index = char_names.index(st.session_state.selected_character)
         except ValueError:
             default_index = 0
-    
+
     selected = st.selectbox(
         "Choisir un personnage:",
         char_names,
         index=default_index,
-        key="char_selector_box"
+        key="char_selector"
     )
-    
+
     # Sauvegarder la sélection
     if selected:
         st.session_state.selected_character = selected
-    
-    characters = char_manager.characters
-    
-    if not characters:
-        st.info(f"Aucune fiche trouvée dans {st.session_state.char_dir}")
-        st.caption("Dépose des fichiers .txt, .md ou .pdf dans ce dossier.")
-        return
-    
-    # Sélection
-    char_names = [""] + char_manager.get_character_names()
-    selected = st.selectbox(
-        "Choisir un personnage:",
-        char_names,
-        key="char_selector"
-    )
+
+    st.markdown("---")
     
     if selected:
         char = char_manager.get_character(selected)
@@ -972,6 +1068,18 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         
         # Exécuter la requête (seulement avec query)
         result = qa_chain({"query": query})
+
+        # Extraire les valeurs du résultat
+        response_text = result.get("result", result.get("answer", ""))
+        source_docs = result.get("source_documents", [])
+
+        # Calculer la confiance basée sur les scores des documents
+        if source_docs:
+            scores = [doc.metadata.get("score", 0.5) for doc in source_docs]
+            confidence = sum(scores) / len(scores) if scores else 0.5
+        else:
+            confidence = 0.0
+
         # Créer l'objet résultat
         result_obj = {
             "response": response_text,
@@ -1023,19 +1131,18 @@ def main():
     # Initialisation
     config = init_app()
     init_session_state(config)
-    
+
     # CSS personnalisé
     st.markdown(ColorScheme.get_css(), unsafe_allow_html=True)
-    
-    # Titre
-    st.title("🗡️ Assistant MJ - Les Lames du Cardinal")
-    st.caption("RAG + Ollama | Mode immersif & Encyclopédique")
-    
-    # Sidebar
-    render_sidebar(config)
-    
-    # Layout principal
-    col_main, col_right = st.columns([3, st.session_state.get('char_column_width', 1.2)])
+
+    # Titre tout en haut pour maximiser l'espace
+    st.title("🗡️ Les Lames du Cardinal")
+
+    # Sidebar avec les fiches de personnages
+    render_sidebar()
+
+    # Layout principal - colonne large pour le contenu principal, colonne droite pour la config
+    col_main, col_config = st.columns([4, 1])
     
     # Colonne principale
     with col_main:
@@ -1176,11 +1283,11 @@ def main():
         # Affichage de la mémoire
         st.markdown("---")
         render_memory_display(st.session_state.mode)
-    
-    # Colonne de droite - Personnages
-    with col_right:
-        render_character_viewer()
-    
+
+    # Colonne de droite - Configuration
+    with col_config:
+        render_config_panel(config)
+
     # Footer
     st.markdown("---")
     st.caption(f"📁 Personnages: {st.session_state.char_dir} | 💾 Sessions: {st.session_state.config['paths']['save_dir']}")

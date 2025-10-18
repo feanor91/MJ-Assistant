@@ -14,9 +14,11 @@ langchain-ollama>=0.1.0
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
 
-# PDF extraction (choose one or both)
-pdfplumber>=0.10.0  # Recommended
-PyPDF2>=3.0.0       # Fallback
+# PDF extraction and rendering
+pdfplumber>=0.10.0  # Recommended for text extraction
+PyPDF2>=3.0.0       # Fallback for text extraction
+pdf2image>=1.16.0   # For PDF to image conversion
+Pillow>=10.0.0      # For image manipulation
 
 # Data visualization
 plotly>=5.18.0
