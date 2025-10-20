@@ -8,9 +8,16 @@ from pathlib import Path
 from datetime import datetime
 import time
 import json
+import warnings
+import logging
 
 # Ajouter le répertoire parent au path pour les imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Supprimer les warnings PDF embêtants
+warnings.filterwarnings("ignore", category=UserWarning)
+logging.getLogger("PyPDF2").setLevel(logging.ERROR)
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 import streamlit as st
 import plotly.express as px
@@ -108,7 +115,11 @@ def init_session_state(config):
         st.session_state.top_p = config['model']['top_p']
         st.session_state.k_retrieval = config['rag']['k_retrieval']
         st.session_state.show_sources = config['ui']['show_sources_default']
+        st.session_state.show_debug_chunks = config['rag'].get('debug_show_context', False)
         st.session_state.mode = config['ui']['default_mode']
+
+        # Nouveau : Sélection des sources pour le mode encyclopédique
+        st.session_state.encyclo_source_filter = "rules_and_universe"  # Par défaut : Règles + Univers
         
         # Compteur pour auto-save
         st.session_state.message_count = 0
@@ -215,11 +226,27 @@ def render_sidebar():
                         from pdf2image import convert_from_path
                         from PIL import Image
                         import PyPDF2
+                        import os
+                        import contextlib
 
-                        # Compter le nombre de pages
-                        with open(char.file_path, "rb") as f:
-                            pdf_reader = PyPDF2.PdfReader(f)
-                            total_pages = len(pdf_reader.pages)
+                        # Supprimer les messages d'erreur PDF en redirigeant stderr
+                        @contextlib.contextmanager
+                        def suppress_stderr():
+                            """Supprime temporairement les messages stderr"""
+                            devnull = open(os.devnull, 'w')
+                            old_stderr = sys.stderr
+                            sys.stderr = devnull
+                            try:
+                                yield
+                            finally:
+                                sys.stderr = old_stderr
+                                devnull.close()
+
+                        # Compter le nombre de pages (sans les warnings)
+                        with suppress_stderr():
+                            with open(char.file_path, "rb") as f:
+                                pdf_reader = PyPDF2.PdfReader(f)
+                                total_pages = len(pdf_reader.pages)
 
                         # S'assurer que la page courante est valide
                         if st.session_state.pdf_page > total_pages:
@@ -247,26 +274,27 @@ def render_sidebar():
                         # DPI 200 pour une bonne qualité
 
                         # Chemin Poppler
-                        import os
                         poppler_path = r"D:\IA\poppler-25.07.0\Library\bin"
 
-                        # Vérifier si Poppler existe à cet endroit
-                        if os.path.exists(poppler_path):
-                            images = convert_from_path(
-                                str(char.file_path),
-                                dpi=200,
-                                first_page=st.session_state.pdf_page,
-                                last_page=st.session_state.pdf_page,
-                                poppler_path=poppler_path
-                            )
-                        else:
-                            # Essayer sans spécifier le chemin (au cas où Poppler est dans le PATH)
-                            images = convert_from_path(
-                                str(char.file_path),
-                                dpi=200,
-                                first_page=st.session_state.pdf_page,
-                                last_page=st.session_state.pdf_page
-                            )
+                        # Convertir la page en image (sans les warnings)
+                        with suppress_stderr():
+                            # Vérifier si Poppler existe à cet endroit
+                            if os.path.exists(poppler_path):
+                                images = convert_from_path(
+                                    str(char.file_path),
+                                    dpi=200,
+                                    first_page=st.session_state.pdf_page,
+                                    last_page=st.session_state.pdf_page,
+                                    poppler_path=poppler_path
+                                )
+                            else:
+                                # Essayer sans spécifier le chemin (au cas où Poppler est dans le PATH)
+                                images = convert_from_path(
+                                    str(char.file_path),
+                                    dpi=200,
+                                    first_page=st.session_state.pdf_page,
+                                    last_page=st.session_state.pdf_page
+                                )
 
                         if images:
                             # Afficher l'image dans la sidebar
@@ -332,11 +360,69 @@ def render_config_panel(config):
     )
     st.session_state.mode = mode
 
+    # Indicateur de réponses longues pour le mode encyclopédique
+    if mode == "Encyclopédique":
+        rerank_enabled = config['rag'].get('enable_reranking', False)
+        if rerank_enabled:
+            st.info("📚 Mode réponses détaillées activé (300-500 mots minimum) | 🎯 Re-ranking activé")
+        else:
+            st.info("📚 Mode réponses détaillées activé (300-500 mots minimum)")
+
+        # Slider pour le nombre de chunks
+        if 'encyclo_k_retrieval' not in st.session_state:
+            st.session_state.encyclo_k_retrieval = config['rag'].get('k_retrieval_encyclo', 50)
+
+        st.markdown("**Nombre de chunks RAG**")
+        encyclo_k = st.slider(
+            "Chunks à récupérer :",
+            min_value=10,
+            max_value=100,
+            value=st.session_state.encyclo_k_retrieval,
+            step=5,
+            key="encyclo_k_slider",
+            help="Plus de chunks = plus de contexte (mais plus lent)"
+        )
+        st.session_state.encyclo_k_retrieval = encyclo_k
+
+        st.caption(f"📊 {encyclo_k} chunks | Temp: 0.0 (anti-hallucination)")
+        st.caption("⚠️ Citations directes des documents sources uniquement")
+        if st.session_state.get('show_debug_chunks', False):
+            st.warning("🔍 Mode DEBUG activé : les chunks récupérés seront affichés")
+
+        # Sélecteur de sources
+        st.markdown("**Sources de recherche**")
+        source_option = st.radio(
+            "Chercher dans :",
+            [
+                "📖 Règles uniquement (détaillées)",
+                "🌍 Univers uniquement (générales + romans)",
+                "📖🌍 Règles + Univers (recommandé, sans romans)"
+            ],
+            index=2,  # Par défaut : Règles + Univers
+            key="source_filter_radio"
+        )
+
+        # Mapper le choix à une valeur
+        if "Règles uniquement" in source_option:
+            st.session_state.encyclo_source_filter = "rules_only"
+            st.caption("✅ Recherche dans les règles détaillées du jeu")
+        elif "Univers uniquement" in source_option:
+            st.session_state.encyclo_source_filter = "universe_only"
+            st.caption("✅ Recherche dans le lore général + romans")
+        else:
+            st.session_state.encyclo_source_filter = "rules_and_universe"
+            st.caption("✅ Recherche dans règles + lore (exclu romans)")
+
     # Options d'affichage
     st.markdown("**Affichage**")
     st.session_state.show_sources = st.checkbox(
         "Afficher les sources RAG",
         value=st.session_state.show_sources
+    )
+    st.session_state.show_debug_chunks = st.checkbox(
+        "Afficher les chunks récupérés (debug)",
+        value=st.session_state.show_debug_chunks,
+        help="Affiche tous les chunks envoyés au modèle avec leurs métadonnées"
     )
 
     # Réglages experts
@@ -359,31 +445,6 @@ def render_config_panel(config):
             1, 12,
             st.session_state.k_retrieval
         )
-
-    # Gestion de la base vectorielle
-    st.markdown("---")
-    st.markdown("**Base de données**")
-
-    col1, col2 = st.columns(2)
-
-    if col1.button("🔄 Recharger", use_container_width=True):
-        if 'vectordb' in st.session_state:
-            del st.session_state['vectordb']
-        st.cache_resource.clear()
-        st.rerun()
-
-    if col2.button("🗑️ Réinitialiser", use_container_width=True):
-        vector_store = VectorStore(config)
-        vector_store.reset(config['paths']['db_dir'])
-        # Supprimer aussi les métadonnées
-        metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
-        if metadata_file.exists():
-            metadata_file.unlink()
-        if 'vectordb' in st.session_state:
-            del st.session_state['vectordb']
-        st.cache_resource.clear()
-        st.success("✅ Base réinitialisée")
-        st.rerun()
 
     # Gestion des sessions
     st.markdown("---")
@@ -1009,24 +1070,57 @@ def load_vectorstore_only(_config):
     return vectordb
 
 
-def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, system_prompt, memory, short_memory, level):
+def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, system_prompt, memory, short_memory, level, source_filter="rules_and_universe", query=""):
     """Crée la chaîne QA (doit être recréée à chaque requête car contient la mémoire)"""
     rag_chain = RAGChain(config)
-    retriever = vectordb.as_retriever(search_kwargs={"k": k})
-    
+
+    # Filtrer les sources selon le mode
+    if mode == "Encyclopédique":
+        # Mode encyclopédique : filtrage selon le choix de l'utilisateur
+        # ⚠️ Chroma utilise {"category": {"$in": [...]}} au lieu de $or
+        if source_filter == "rules_only":
+            # Option 1 : Règles uniquement (détaillées)
+            filter_config = {
+                "category": {"$in": ["rules", "unknown"]}
+            }
+        elif source_filter == "universe_only":
+            # Option 2 : Univers uniquement (générales + romans)
+            filter_config = {
+                "category": {"$in": ["universe_book", "novel"]}
+            }
+        else:  # rules_and_universe (par défaut)
+            # Option 3 : Règles + Univers (sans romans)
+            filter_config = {
+                "category": {"$in": ["rules", "universe_book", "unknown"]}
+            }
+
+        retriever = vectordb.as_retriever(
+            search_kwargs={
+                "k": k,
+                "filter": filter_config
+            }
+        )
+    else:
+        # Mode MJ : tous les documents
+        retriever = vectordb.as_retriever(search_kwargs={"k": k})
+
+    # Retourner les sources si l'utilisateur veut voir les sources OU les chunks de debug
+    return_sources = st.session_state.get('show_sources', False) or st.session_state.get('show_debug_chunks', False)
+
     qa_chain = rag_chain.create_qa_chain(
         retriever=retriever,
         model_name=model,
         mode="mj" if mode == "MJ immersif" else "encyclo",
         temperature=temp,
         top_p=top_p,
-        return_sources=show_sources,
+        return_sources=return_sources,
         system_prompt=system_prompt,
         memory=memory,
         short_memory=short_memory,
-        level=level
+        level=level,
+        query=query  # 🆕 Passer la query pour le re-ranking
     )
-    
+
     return qa_chain, rag_chain
 
 
@@ -1035,12 +1129,16 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
     try:
         # Prompt système
         system_prompt = config['prompts']['mj_system' if mode == "MJ immersif" else 'encyclo_system']
-        
+
         # Préparer la mémoire selon le mode
         if mode == "MJ immersif":
             memory = st.session_state.mj_memory
             memory_text = memory.format_for_prompt(n=config['memory']['short_memory_context'])
             short_memory_text = ""
+            # Utiliser k_retrieval standard pour le mode MJ
+            k_value = st.session_state.k_retrieval
+            # Température normale pour le mode MJ
+            temp_value = st.session_state.temperature
         else:
             memory = st.session_state.encyclo_memory
             memory_text = ""
@@ -1049,29 +1147,65 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                 prefix_user="Question",
                 prefix_assistant="Réponse"
             )
-        
-        # Créer la qa_chain avec tous les paramètres intégrés
+            # Utiliser la valeur du slider pour le mode encyclopédique
+            k_value = st.session_state.get('encyclo_k_retrieval', config['rag'].get('k_retrieval_encyclo', 50))
+            # Température à 0 pour éviter les hallucinations et forcer la fidélité au contexte
+            temp_value = 0.0
+
+        # Récupérer le filtre de source pour le mode encyclopédique
+        source_filter = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
+
+        # Créer la qa_chain avec tous les paramètres intégrés (y compris query pour re-ranking)
         qa_chain, _ = get_qa_chain(
             config=config,
             vectordb=vectordb,
             model=st.session_state.current_model,
             mode=mode,
-            temp=st.session_state.temperature,
+            temp=temp_value,
             top_p=st.session_state.top_p,
-            k=st.session_state.k_retrieval,
+            k=k_value,
             show_sources=st.session_state.show_sources,
             system_prompt=system_prompt,
             memory=memory_text,
             short_memory=short_memory_text,
-            level=level
+            level=level,
+            source_filter=source_filter,
+            query=query  # 🆕 Passer la query pour le re-ranking
         )
         
-        # Exécuter la requête (seulement avec query)
-        result = qa_chain({"query": query})
+        # Exécuter la requête (utilise invoke au lieu de __call__)
+        result = qa_chain.invoke({"query": query})
+
+        # 🔍 DEBUG : Afficher ce qui est retourné par le modèle
+        print("\n" + "="*60)
+        print("🔍 DEBUG - Résultat brut du modèle :")
+        print("="*60)
+        print("Type du résultat :", type(result))
+        print("Clés disponibles :", result.keys() if isinstance(result, dict) else "N/A")
 
         # Extraire les valeurs du résultat
         response_text = result.get("result", result.get("answer", ""))
         source_docs = result.get("source_documents", [])
+
+        print("\n📝 Réponse extraite :")
+        print("Longueur :", len(response_text), "caractères")
+        print("Premiers 200 caractères :", response_text[:200])
+        print("Nombre de sources :", len(source_docs))
+
+        # 🔍 DEBUG supplémentaire si réponse vide
+        if len(response_text) == 0:
+            print("\n⚠️ ATTENTION : Réponse vide détectée !")
+            print("Vérification du contexte envoyé au modèle...")
+            if source_docs:
+                print("\n📄 Aperçu des sources récupérées :")
+                for i, doc in enumerate(source_docs[:3], 1):  # Premiers 3 chunks
+                    print(f"\n--- Chunk {i} (source: {doc.metadata.get('source', 'inconnu')}) ---")
+                    print(doc.page_content[:300])
+                    print("...")
+            else:
+                print("❌ Aucune source récupérée ! Problème de recherche vectorielle.")
+
+        print("="*60 + "\n")
 
         # Calculer la confiance basée sur les scores des documents
         if source_docs:
@@ -1151,56 +1285,65 @@ def main():
             st.markdown("### 🕰️ Timeline de la partie")
             render_timeline()
         
+        # Initialiser le flag de première requête
+        if 'first_query_sent' not in st.session_state:
+            st.session_state.first_query_sent = False
+
         # Chargement des documents et vectorstore - LOGIQUE INTELLIGENTE
-        st.markdown("---")
-        
-        # Titre de section visible
-        col_load1, col_load2 = st.columns([1, 4])
-        with col_load1:
-            st.markdown("## 📚")
-        with col_load2:
-            st.markdown("## Chargement du corpus")
-        
-        st.markdown("---")
-        
+        # Masquer après la première requête pour gagner de l'espace
+        if not st.session_state.first_query_sent:
+            st.markdown("---")
+
+            # Titre de section visible
+            col_load1, col_load2 = st.columns([1, 4])
+            with col_load1:
+                st.markdown("## 📚")
+            with col_load2:
+                st.markdown("## Chargement du corpus")
+
+            st.markdown("---")
+
         # Vérifier si un rechargement est nécessaire
         needs_reload, reason = check_corpus_changes(config)
         
         if needs_reload:
-            # Afficher pourquoi on recharge
-            st.warning(f"🔄 **Rechargement nécessaire** : {reason}")
-            
+            if not st.session_state.first_query_sent:
+                # Afficher pourquoi on recharge
+                st.warning(f"🔄 **Rechargement nécessaire** : {reason}")
+
             # Chargement complet avec progression
             documents = load_documents(config)
-            
+
             if not documents:
                 st.error("❌ **Aucun document trouvé !**")
                 st.warning(f"Vérifie que des PDFs sont présents dans : `{config['paths']['pdf_root']}`")
                 st.info("💡 Dépose tes PDFs de règles dans ce dossier et relance l'application.")
                 st.stop()
-            
+
             # Construction de la base vectorielle
             vectordb = build_vectorstore(config, documents)
         else:
             # Chargement rapide (base existe et corpus inchangé)
-            st.success(f"✅ **{reason}** - Chargement rapide activé !")
-            
+            if not st.session_state.first_query_sent:
+                st.success(f"✅ **{reason}** - Chargement rapide activé !")
+
             # Charger uniquement la base vectorielle (ultra rapide)
             vectordb = load_vectorstore_only(config)
-            
+
             # Lire les métadonnées pour afficher les stats
-            metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
-            if metadata_file.exists():
-                try:
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                        num_docs = metadata.get('total_files', 0)
-                        st.info(f"📊 Base vectorielle contient {num_docs} documents")
-                except Exception:
-                    pass
-        
-        # Afficher stats finales (uniquement si on a rechargé)
-        if needs_reload and 'documents' in locals():
+            if not st.session_state.first_query_sent:
+                metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
+                if metadata_file.exists():
+                    try:
+                        with open(metadata_file, 'r', encoding='utf-8') as f:
+                            metadata = json.load(f)
+                            num_docs = metadata.get('total_files', 0)
+                            st.info(f"📊 Base vectorielle contient {num_docs} documents")
+                    except Exception:
+                        pass
+
+        # Afficher stats finales (uniquement si on a rechargé ET si c'est avant la première requête)
+        if not st.session_state.first_query_sent and needs_reload and 'documents' in locals():
             st.markdown("---")
             st.markdown("### 📊 Statistiques du corpus")
             col_stat1, col_stat2, col_stat3 = st.columns(3)
@@ -1213,7 +1356,21 @@ def main():
                 # Estimer le nombre de chunks
                 estimated_chunks = total_chars // config['rag']['chunk_size']
                 st.metric("🧩 Chunks estimés", f"~{estimated_chunks:,}")
-        
+
+        # Petite note discrète après la première requête
+        if st.session_state.first_query_sent:
+            # Lire le nombre de docs pour affichage compact
+            metadata_file = config['paths']['db_dir'] / "corpus_metadata.json"
+            num_docs = 0
+            if metadata_file.exists():
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        num_docs = metadata.get('total_files', 0)
+                except Exception:
+                    pass
+            st.caption(f"📚 Base vectorielle chargée ({num_docs} documents)")
+
         st.markdown("---")
         
         # Zone d'interaction
@@ -1229,27 +1386,23 @@ def main():
         else:
             level = "N/A"
         
-        # Input utilisateur
-        user_query = st.text_area(
-            "Ta question ou action:",
-            height=120,
-            placeholder="Ex: Que se passe-t-il si j'ouvre cette porte ?\nEx: Explique-moi le système de combat.",
-            key="user_input"
-        )
-        
-        # Bouton d'envoi
-        col_send, col_clear = st.columns([3, 1])
-        
-        with col_send:
-            submit = st.button("📤 Envoyer", type="primary", use_container_width=True)
-        
-        with col_clear:
-            if st.button("🗑️ Effacer", use_container_width=True):
-                st.session_state.user_input = ""
-                st.rerun()
-        
+        # Utiliser un formulaire pour gérer l'envoi avec Entrée
+        with st.form(key="query_form", clear_on_submit=True):
+            user_query = st.text_input(
+                "Ta question ou action (Entrée pour envoyer):",
+                placeholder="Ex: Explique-moi le Voleur sans Mémoire",
+                key="user_input"
+            )
+
+            # Avertissement pour questions trop larges
+            if user_query and any(word in user_query.lower() for word in ["liste", "tous", "toutes", "22", "vingt"]):
+                st.warning("⚠️ **Attention** : Les questions demandant des listes complètes peuvent générer des hallucinations. Le RAG fonctionne mieux avec des questions ciblées (ex: 'Explique l'arcane X').")
+
+            # Bouton d'envoi
+            submit = st.form_submit_button("📤 Envoyer", type="primary", use_container_width=True)
+
         # Traitement de la requête
-        if submit and user_query.strip():
+        if submit and user_query and user_query.strip():
             with st.spinner("🤔 Le MJ réfléchit..."):
                 try:
                     result = process_query(
@@ -1259,17 +1412,106 @@ def main():
                         level=level,
                         vectordb=vectordb
                     )
-                    
+
+                    # Marquer que la première requête a été envoyée
+                    st.session_state.first_query_sent = True
+
+                    # Afficher la question posée
+                    st.markdown("### 💬 Question")
+                    st.info(f"**{user_query}**")
+
                     # Affichage de la réponse
                     st.markdown("### ✅ Réponse")
-                    st.markdown(result['response'])
-                    
+
+                    if result['response'] and len(result['response'].strip()) > 0:
+                        # Détection d'hallucination potentielle
+                        suspicious_patterns = [
+                            "une créature ou un lieu en danger",  # Répétition suspecte
+                            "selon le contexte fourni",  # Phrase conclusive inventée
+                            "Ce sont les",  # Phrase conclusive inventée
+                        ]
+
+                        hallucination_detected = False
+                        for pattern in suspicious_patterns:
+                            if result['response'].count(pattern) > 3:  # Répété plus de 3 fois = suspect
+                                hallucination_detected = True
+                                break
+
+                        if hallucination_detected:
+                            st.error("⚠️ ALERTE : Hallucination potentielle détectée !")
+                            st.warning("""
+                            Le modèle semble avoir **inventé** du contenu (répétitions suspectes détectées).
+
+                            **Causes probables :**
+                            - Les chunks récupérés ne contiennent pas l'information complète
+                            - La question est trop large pour la recherche vectorielle
+
+                            **Solutions :**
+                            - Pose une question plus **ciblée** (ex: "Explique l'arcane 2")
+                            - Vérifie les sources ci-dessous pour voir ce qui est réellement dans le contexte
+                            - Augmente les chunks si nécessaire
+                            """)
+
+                            with st.expander("⚠️ Réponse suspecte (à vérifier)"):
+                                st.markdown(result['response'])
+                        else:
+                            st.markdown(result['response'])
+                    else:
+                        st.error("❌ Le modèle n'a pas généré de réponse.")
+                        st.warning("💡 **Causes possibles :**")
+                        st.info("""
+                        1. **Information incomplète** : Les chunks récupérés ne contiennent pas toute l'info demandée
+                        2. **Trop peu de chunks** : Pour des questions larges (ex: "liste les 22 arcanes"), augmente le nombre de chunks
+                        3. **Modèle trop strict** : Le modèle refuse de répondre partiellement
+
+                        **Solutions :**
+                        - ⬆️ Augmente le slider de chunks (essaie 30-50 pour des listes complètes)
+                        - 🎯 Pose une question plus ciblée (ex: "explique l'arcane X")
+                        - 🔄 Essaie un autre modèle (qwen2.5:14b ou mistral-nemo)
+                        """)
+
+                        # Afficher les sources pour aider au diagnostic
+                        if st.session_state.get('show_sources', True) and result.get('sources'):
+                            with st.expander("🔍 Sources récupérées (pour diagnostic)"):
+                                st.caption(f"Le système a trouvé {len(result['sources'])} chunks. Vérifie s'ils contiennent l'information recherchée.")
+                                for i, doc in enumerate(result['sources'][:5], 1):
+                                    st.markdown(f"**Chunk {i}** (source: {doc.metadata.get('source', 'inconnu')})")
+                                    preview = doc.page_content[:400].replace("\n", " ")
+                                    st.text(preview + "...")
+                                    st.markdown("---")
+
                     # Confiance RAG
                     if result['confidence'] > 0:
                         confidence_color = "🟢" if result['confidence'] > 0.7 else "🟡" if result['confidence'] > 0.4 else "🔴"
                         st.caption(f"{confidence_color} Confiance RAG: {result['confidence']:.0%}")
-                    
-                    # Sources
+
+                    # Mode debug : afficher le contexte complet envoyé au modèle
+                    if st.session_state.get('show_debug_chunks', False):
+                        # Afficher quel filtre est actif
+                        filter_names = {
+                            "rules_only": "📖 Règles uniquement",
+                            "universe_only": "🌍 Univers + Romans",
+                            "rules_and_universe": "📖🌍 Règles + Univers (sans romans)"
+                        }
+                        current_source_filter = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
+                        active_filter = filter_names.get(current_source_filter, current_source_filter)
+
+                        with st.expander(f"🔍 DEBUG: Chunks récupérés ({len(result['sources'])} chunks)"):
+                            if result['sources']:
+                                st.info(f"🎯 Filtre actif : **{active_filter}**")
+                                st.warning("⚠️ Vérifiez si les informations recherchées sont présentes ci-dessous")
+                                for i, doc in enumerate(result['sources'], 1):
+                                    st.markdown(f"### Chunk {i}/{len(result['sources'])}")
+                                    # Afficher les métadonnées
+                                    if hasattr(doc, 'metadata') and doc.metadata:
+                                        st.caption(f"Source: {doc.metadata.get('source', 'inconnu')} | Catégorie: {doc.metadata.get('category', 'inconnu')}")
+                                    # Afficher le contenu complet
+                                    st.text_area(f"Contenu chunk {i}", doc.page_content, height=200, key=f"debug_chunk_{i}")
+                                    st.markdown("---")
+                            else:
+                                st.error("❌ Aucun chunk récupéré ! Problème de recherche RAG.")
+
+                    # Sources (affichage normal)
                     if st.session_state.show_sources and result['sources']:
                         with st.expander(f"📚 Sources ({len(result['sources'])} documents)"):
                             for i, doc in enumerate(result['sources'], 1):

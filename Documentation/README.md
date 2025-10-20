@@ -114,8 +114,11 @@ L'application s'ouvre dans votre navigateur par défaut.
 - Différents niveaux de narration
 
 #### Mode Encyclopédique
-- Consultation factuelle des règles
-- Réponses courtes et précises
+- Consultation factuelle des règles et de l'univers
+- **Réponses longues et détaillées** (300-500 mots minimum)
+- **Structure markdown** avec sections (Résumé, Explication, Mécaniques, Exemples, Contexte, Notes)
+- **30 chunks de contexte RAG** (vs 20 en mode MJ) pour des réponses exhaustives
+- Température optimisée (≤0.3) pour cohérence et structuration
 - Pas de narration ni d'état de jeu
 
 ### Interface

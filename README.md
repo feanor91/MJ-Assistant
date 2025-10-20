@@ -75,15 +75,20 @@ brew install poppler
 Pour accélérer les embeddings avec GPU :
 
 ```bash
-# CUDA 11.8
-pip install torch --index-url https://download.pytorch.org/whl/cu118
+# RTX 5090/5080/5070 Ti (architecture Blackwell) - Nécessite CUDA 12.8
+pip install torch --index-url https://download.pytorch.org/whl/cu128
 
-# CUDA 12.1
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+# RTX 4090/4080/3090 (CUDA 12.6)
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# RTX 3080/3070 (CUDA 11.8)
+pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 # CPU uniquement
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
+
+**Note RTX 50xx** : Ces GPUs (Blackwell sm_120) nécessitent PyTorch 2.7+ avec CUDA 12.8. Voir `INSTALLER_PYTORCH_CUDA.md` pour les détails.
 
 ### 6. Structure des dossiers
 
@@ -138,8 +143,15 @@ L'application s'ouvre dans votre navigateur par défaut.
 - Différents niveaux de narration
 
 #### Mode Encyclopédique
-- Consultation factuelle des règles
-- Réponses courtes et précises
+- Consultation factuelle des règles et de l'univers
+- **Réponses longues et détaillées** (300-500 mots minimum)
+- **Structure markdown** avec sections (Résumé, Explication, Mécaniques, Exemples, Contexte, Notes)
+- **50 chunks de contexte RAG** (vs 20 en mode MJ) pour des réponses exhaustives
+- Température optimisée (0.0) pour cohérence et citation fidèle
+- **3 options de filtrage des sources** :
+  - **📖 Règles uniquement** : Informations détaillées et mécaniques précises (idéal pour comprendre les règles du Tarot des Ombres, combats, etc.)
+  - **🌍 Univers uniquement** : Informations générales sur le lore + romans (idéal pour le contexte narratif)
+  - **📖🌍 Règles + Univers** (recommandé) : Combine détails techniques et contexte narratif, exclut les romans
 - Pas de narration ni d'état de jeu
 
 ### Interface
@@ -162,6 +174,12 @@ L'application s'ouvre dans votre navigateur par défaut.
 **Colonne droite - Configuration**
 - Sélection du modèle Ollama
 - Choix du mode (MJ immersif / Encyclopédique)
+  - **Indicateur "Mode réponses détaillées"** en mode Encyclopédique
+  - Affichage du nombre de chunks utilisés (50 en mode Encyclo)
+  - **Sélecteur de sources** (en mode Encyclopédique uniquement) :
+    - 📖 Règles uniquement : Pour questions techniques sur le système de jeu
+    - 🌍 Univers uniquement : Pour questions sur le lore et l'univers narratif
+    - 📖🌍 Règles + Univers : Recommandé pour avoir le contexte complet
 - Options d'affichage (sources RAG)
 - Réglages experts (température, top-p, k retrieval)
 - Gestion de la base vectorielle (Recharger/Réinitialiser)
@@ -197,6 +215,7 @@ prompts:
 rag:
   chunk_size: 500
   k_retrieval: 4
+  k_retrieval_encyclo: 8  # Plus de contexte en mode encyclopédique
 ```
 
 **Pour les gros corpus (> 500 pages)** :
@@ -204,6 +223,66 @@ rag:
 rag:
   chunk_size: 1500
   k_retrieval: 8
+  k_retrieval_encyclo: 12  # Plus de contexte en mode encyclopédique
+```
+
+**Configuration actuelle (optimisée pour règles détaillées)** :
+```yaml
+rag:
+  chunk_size: 600
+  k_retrieval: 20
+  k_retrieval_encyclo: 30  # 50% plus de contexte pour réponses exhaustives
+```
+
+### Personnaliser le mode encyclopédique
+
+Le mode encyclopédique dispose désormais d'un système de réponses longues optimisé :
+
+**Paramètres dans config.yaml** :
+```yaml
+rag:
+  k_retrieval_encyclo: 50  # Nombre de chunks (défaut: 50, augmenter pour plus de détails)
+
+prompts:
+  encyclo_system: |
+    Tu es une encyclopédie EXHAUSTIVE...
+    [Personnaliser les instructions de structure et longueur]
+```
+
+**Ajustements recommandés** :
+- Pour des réponses **encore plus longues** : augmenter `k_retrieval_encyclo` à 80-100
+- Pour des réponses **plus concises** : réduire à 30 et modifier le prompt système
+- La température est automatiquement fixée à **0.0** pour éliminer les hallucinations
+
+### Exemples d'utilisation du mode encyclopédique
+
+**Question sur les règles (utiliser "📖 Règles uniquement")** :
+```
+Question : "Parle-moi de l'arcane du Tarot des Ombres 'Le Voleur sans Mémoire'"
+Filtre : 📖 Règles uniquement
+
+✅ Résultat : Réponse détaillée avec :
+- Symbole et signification
+- Valeurs de dé (VD), Modificateurs (M), Complications (C)
+- Sortilèges typiques avec exemples précis
+- Rituels typiques avec calculs de PE
+- Citations directes du manuel de règles
+```
+
+**Question sur l'univers (utiliser "🌍 Univers uniquement")** :
+```
+Question : "Qui est le Cardinal de Richelieu dans cet univers ?"
+Filtre : 🌍 Univers uniquement
+
+✅ Résultat : Informations narratives sur le personnage, son rôle dans l'histoire
+```
+
+**Question mixte (utiliser "📖🌍 Règles + Univers")** :
+```
+Question : "Comment fonctionne la magie des Lames ?"
+Filtre : 📖🌍 Règles + Univers (recommandé)
+
+✅ Résultat : Explication technique (règles) + contexte narratif (univers)
 ```
 
 ### Modèles recommandés

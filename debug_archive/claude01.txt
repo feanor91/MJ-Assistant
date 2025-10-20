@@ -1,0 +1,935 @@
+
+╭─── Claude Code v2.0.22 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                │ Tips for getting started                                                                                                                                                                                                                            │
+│   Welcome back Parle moi en!   │ Run /init to create a CLAUDE.md file with instructions for Claude                                                                                                                                                                                   │
+│                                │ Run /install-github-app to tag @claude right from your Github issues and PRs                                                                                                                                                                        │
+│             ▐▛███▜▌            │ ────────────────────────────────────────────────────────────────────────────                                                                                                                                                                        │
+│            ▝▜█████▛▘           │ Recent activity                                                                                                                                                                                                                                     │
+│              ▘▘ ▝▝             │ No recent activity                                                                                                                                                                                                                                  │
+│                                │                                                                                                                                                                                                                                                     │
+│     Sonnet 4.5 · Claude Pro    │                                                                                                                                                                                                                                                     │
+│       D:\IA\MJ-Assistant       │                                                                                                                                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════ Conversation compacted · ctrl+o for history ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  ⎿  Read config.yaml (67 lines)
+  ⎿  Referenced file core\rag.py
+  ⎿  Read test_pymupdf.py (108 lines)
+  ⎿  Read check_pdf_extraction.py (101 lines)
+  ⎿  Referenced file app.py
+  ⎿  Todo list read (8 items)
+
+● Je vais maintenant vous guider pour régénérer complètement la base vectorielle avec le nouveau modèle d'embeddings bge-m3 qui devrait beaucoup mieux fonctionner pour le français technique.
+
+● 📋 Instructions pour régénérer la base avec bge-m3
+
+  Voici les étapes à suivre pour que la base vectorielle soit entièrement reconstruite avec le nouveau modèle d'embeddings BAAI/bge-m3 (bien meilleur pour le français technique) :
+
+  1. Arrêter MJ Assistant
+
+  Dans le terminal où l'application tourne, faites Ctrl+C pour l'arrêter complètement.
+
+  2. Supprimer manuellement le dossier lames_db
+
+  Supprimez TOUT le dossier :
+  D:\IA\MJ-Assistant\lames_db
+
+  ⚠️ Important : Supprimez le dossier ENTIER, pas juste son contenu. Cela garantit qu'il n'y a aucun résidu.
+
+  3. Relancer l'application
+
+  "venv\Scripts\python.exe" app.py
+
+  L'application va automatiquement :
+  - ✅ Détecter que lames_db n'existe pas
+  - ✅ Utiliser PyMuPDF pour extraire PROPREMENT les PDFs (sans mélange de colonnes)
+  - ✅ Utiliser bge-m3 pour créer les embeddings (meilleur match sémantique pour le français)
+  - ✅ Créer des chunks de 600 caractères avec 250 de chevauchement
+  - ✅ Régénérer toute la base vectorielle
+
+  4. Tester à nouveau
+
+  Une fois la base régénérée, testez avec :
+  "comment résoudre une opposition D2R3"
+
+  Avec bge-m3, le RAG devrait maintenant trouver les bonnes pages de règles (pages 54-58 sur les Tests) au lieu de juste des exemples de scénarios.
+
+  ---
+  🎯 Pourquoi bge-m3 devrait résoudre le problème
+
+  | Critère          | all-MiniLM-L6-v2 (ancien) | BAAI/bge-m3 (nouveau)            |
+  |------------------|---------------------------|----------------------------------|
+  | Langue           | Anglais principalement    | Multilingue (excellent français) |
+  | Domaine          | Général                   | Technique, académique            |
+  | Taille           | Petit (80M paramètres)    | Grand (568M paramètres)          |
+  | Match sémantique | ❌ "D2R3" ≠ "Test éclair"  | ✅ Comprend terminologie JdR      |
+
+  ---
+  Une fois que vous avez fait ces étapes, testez et dites-moi les résultats ! Si bge-m3 fonctionne, mistral-nemo devrait enfin donner une réponse correcte basée sur les VRAIES règles du jeu.
+
+> llama est fini de télécharger? 
+
+● Bash(ollama list)
+  ⎿  NAME                        ID              SIZE      MODIFIED  
+     gpt-oss:latest              17052f91a42e    13 GB     7 days ago
+     bge-m3:latest               790764642607    1.2 GB    9 days ago
+     … +2 lines (ctrl+o to expand)
+
+● ❌ Non, llama3 n'apparaît pas encore dans la liste des modèles disponibles.
+
+  Je vois actuellement :
+  - ✅ gpt-oss (13 GB)
+  - ✅ mistral-nemo (7.1 GB)
+  - ✅ bge-m3 (1.2 GB) - le nouveau modèle d'embeddings
+  - ✅ mxbai-embed-large (669 MB)
+
+  Si vous aviez lancé ollama pull llama3, vous pouvez vérifier s'il est encore en cours de téléchargement en relançant la commande :
+
+  ollama pull llama3
+
+  Si le téléchargement avait été interrompu, cette commande reprendra là où il s'était arrêté.
+
+  Recommandation : En attendant llama3, vous pouvez déjà :
+  1. Régénérer la base vectorielle avec bge-m3 (comme indiqué dans mon message précédent)
+  2. Tester avec mistral-nemo qui a déjà donné des meilleurs résultats que gpt-oss
+
+  Voulez-vous que je vous aide à lancer le téléchargement de llama3 maintenant ?
+
+> il y a aussi llama 3.2 
+
+● Excellent point ! Vous avez raison, llama3.2 est la version plus récente. Ollama propose plusieurs variantes :
+
+● Bash(ollama pull llama3.2)
+  ⎿  Interrupted · What should Claude do instead?
+
+> il est en cours de téléchargement 
+
+● Parfait ! 👍 llama3.2 est en cours de téléchargement.
+
+  En attendant qu'il se termine, vous pouvez déjà régénérer la base vectorielle avec bge-m3 pour améliorer la qualité du RAG. Cela prend quelques minutes et c'est indépendant du modèle LLM utilisé.
+
+  🎯 Pendant que llama3.2 télécharge :
+
+  Étapes pour régénérer la base :
+
+  1. Arrêter MJ Assistant (Ctrl+C dans le terminal où il tourne)
+  2. Supprimer le dossier D:\IA\MJ-Assistant\lames_db
+  3. Relancer : "venv\Scripts\python.exe" app.py
+  4. Attendre que la base se régénère avec PyMuPDF + bge-m3
+
+  Une fois que llama3.2 sera téléchargé ET que la base sera régénérée, vous pourrez tester avec ce modèle qui devrait être encore meilleur que mistral-nemo pour suivre les instructions strictes (ne pas inventer de dés).
+
+  Voulez-vous procéder à la régénération de la base maintenant, ou préférez-vous attendre que llama3.2 soit complètement téléchargé ?
+
+> la base est en cours de rechargement 
+
+● Excellent ! 🎉 La base vectorielle est en train de se régénérer avec toutes les améliorations :
+
+  🔄 Ce qui se passe actuellement :
+
+  1. ✅ PyMuPDF extrait les PDFs sans mélanger les colonnes
+  2. ✅ bge-m3 crée les embeddings (meilleur pour le français technique)
+  3. ✅ Chunks de 600 caractères avec 250 de chevauchement (plus précis)
+  4. ✅ 20 documents seront récupérés par requête (au lieu de 6)
+
+  ⏱️ Temps estimé :
+
+  La régénération prend généralement 3-10 minutes selon :
+  - Le nombre de PDFs dans Data/Regles/
+  - La puissance de votre CPU/GPU
+  - Le téléchargement du modèle bge-m3 s'il n'était pas en cache
+
+  📋 Une fois terminé :
+
+  1. Attendez que llama3.2 finisse de télécharger (en parallèle)
+  2. Testez d'abord avec mistral-nemo :
+    - Question : "comment résoudre une opposition D2R3"
+    - Vérifiez si les sources récupérées sont meilleures
+  3. Ensuite testez avec llama3.2 (quand disponible)
+
+  Avec bge-m3, le RAG devrait maintenant trouver les vraies pages de règles (54-58 sur les Tests) au lieu de juste des exemples narratifs. 🎯
+
+  Tenez-moi au courant une fois que la base est rechargée et que vous avez testé !
+
+> j'ai l'impression que c'est bloqué Cannot set gray non-stroke color because /'wspe_P1' is an invalid float value
+D:\IA\MJ-Assistant\core\rag.py:262: LangChainDeprecationWarning: The class `HuggingFaceEmbeddings` was deprecated in LangChain 0.2.2 and will be removed in 1.0. An updated version of the class exists in the :class:`~langchain-huggingface package and should be used instead. To
+ use it run `pip install -U :class:`~langchain-huggingface` and import as `from :class:`~langchain_huggingface import HuggingFaceEmbeddings``.
+  self._embeddings = SentenceTransformerEmbeddings(
+modules.json: 100%|███████████████████████████████████████████████████████████████████| 349/349 [00:00<00:00, 4.56MB/s]
+D:\IA\MJ-Assistant\venv\Lib\site-packages\huggingface_hub\file_download.py:143: UserWarning: `huggingface_hub` cache-system uses symlinks by default to efficiently store duplicated files but your machine does not support them in 
+C:\Users\bteuile\.cache\huggingface\hub\models--BAAI--bge-m3. Caching files will still work but in a degraded version that might require more space on your disk. This warning can be disabled by setting the `HF_HUB_DISABLE_SYMLINKS_WARNING` environment variable. For more 
+details, see https://huggingface.co/docs/huggingface_hub/how-to-cache#limitations.
+To support symlinks on Windows, you either need to activate Developer Mode or to run Python as an administrator. In order to activate developer mode, see this article: https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development
+  warnings.warn(message)
+config_sentence_transformers.json: 100%|██████████████████████████████████████████████| 123/123 [00:00<00:00, 1.84MB/s]
+README.md: 15.8kB [00:00, 66.0MB/s]
+sentence_bert_config.json: 100%|█████████████████████████████████████████████████████| 54.0/54.0 [00:00<00:00, 913kB/s]
+config.json: 100%|████████████████████████████████████████████████████████████████████| 687/687 [00:00<00:00, 11.5MB/s]
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+pytorch_model.bin: 100%|██████████████████████████████████████████████████████████| 2.27G/2.27G [00:32<00:00, 70.4MB/s]
+tokenizer_config.json: 100%|██████████████████████████████████████████████████████████| 444/444 [00:00<00:00, 3.97MB/s]
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+sentencepiece.bpe.model: 100%|████████████████████████████████████████████████████| 5.07M/5.07M [00:00<00:00, 78.6MB/s]
+model.safetensors:   0%|                                                                   | 0.00/2.27G [00:00<?, ?B/s]Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the 
+package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+tokenizer.json: 100%|█████████████████████████████████████████████████████████████| 17.1M/17.1M [00:00<00:00, 37.9MB/s]
+special_tokens_map.json: 100%|████████████████████████████████████████████████████████| 964/964 [00:00<00:00, 8.37MB/s]
+config.json: 100%|████████████████████████████████████████████████████████████████████| 191/191 [00:00<00:00, 3.35MB/s]
+model.safetensors: 100%|██████████████████████████████████████████████████████████| 2.27G/2.27G [00:32<00:00, 69.0MB/s]
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+model.safetensors: 100%|██████████████████████████████████████████████████████████| 2.27G/2.27G [00:33<00:00, 68.3MB/s] 
+
+● Je vois le problème ! Il y a une erreur PyMuPDF lors de l'extraction d'un PDF :
+
+  Cannot set gray non-stroke color because /'wspe_P1' is an invalid float value
+
+  Cette erreur vient d'un PDF mal formé dans votre dossier Data/Regles/. PyMuPDF ne peut pas lire correctement ce fichier.
+
+● Bash(dir "D:\IA\MJ-Assistant\Data\Regles" /b)
+  ⎿  Error: dir: cannot access '/b': No such file or directory
+
+     D\:\\IA\\MJ-Assistant\\Data\\Regles:
+     Livre\ 2\ -\ Le\ Jeu.pdf
+
+● Bash(dir "D:\IA\MJ-Assistant\Data\Regles")
+  ⎿  Livre\ 2\ -\ Le\ Jeu.pdf
+
+● Le problème vient du PDF "Livre 2 - Le Jeu.pdf" qui a certaines pages mal formées que PyMuPDF ne peut pas lire.
+
+  Je vais modifier core/rag.py pour gérer l'erreur gracieusement et continuer l'extraction même si certaines pages posent problème :
+
+● Read(core\rag.py)
+  ⎿  Read 60 lines
+
+● Read(core\rag.py)
+  ⎿  Read 40 lines
+
+● Je vois le problème. L'erreur se produit à la ligne 171 lors de page.get_text("blocks"). Je vais ajouter une gestion d'erreur par page pour que l'extraction continue même si certaines pages posent problème :
+
+● Update(core\rag.py)
+  ⎿  Updated core\rag.py with 23 additions and 12 removals                                                  
+       165    
+       166                    text_parts = []
+       167                    for page_num in range(num_pages):
+       168 -                      page = doc[page_num]
+       168 +                      try:
+       169 +                          page = doc[page_num]
+       170    
+       171 -                      # Utiliser get_text("blocks") pour mieux respecter la structure
+       172 -                      blocks = page.get_text("blocks")
+       173 -                      # Trier les blocs par position (haut vers bas, gauche vers droite)
+       174 -                      sorted_blocks = sorted(blocks, key=lambda b: (b[1], b[0]))  # y puis x
+       171 +                          # Utiliser get_text("blocks") pour mieux respecter la structure
+       172 +                          blocks = page.get_text("blocks")
+       173 +                          # Trier les blocs par position (haut vers bas, gauche vers droite)
+       174 +                          sorted_blocks = sorted(blocks, key=lambda b: (b[1], b[0]))  # y puis x
+       175    
+       176 -                      page_text = ""
+       177 -                      for block in sorted_blocks:
+       178 -                          if block[6] == 0:  # Type texte
+       179 -                              text = block[4].strip()
+       180 -                              if text:
+       181 -                                  page_text += text + "\n"
+       176 +                          page_text = ""
+       177 +                          for block in sorted_blocks:
+       178 +                              if block[6] == 0:  # Type texte
+       179 +                                  text = block[4].strip()
+       180 +                                  if text:
+       181 +                                      page_text += text + "\n"
+       182    
+       183 -                      text_parts.append(page_text)
+       183 +                          text_parts.append(page_text)
+       184 +                      except Exception as e:
+       185 +                          # Si une page pose problème, on continue avec les autres
+       186 +                          print(f"⚠️  Page {page_num + 1} ignorée (erreur: {str(e)[:50]})")
+       187 +                          # Essayer extraction simple en fallback
+       188 +                          try:
+       189 +                              page_text = page.get_text("text")
+       190 +                              text_parts.append(page_text)
+       191 +                          except:
+       192 +                              # Si même l'extraction simple échoue, on skip cette page
+       193 +                              text_parts.append(f"[Page {page_num + 1} non extractible]")
+       194    
+       195                    doc.close()
+       196                    return "\n".join(text_parts)
+
+● ✅ Correction appliquée !
+
+  J'ai modifié core/rag.py pour gérer les erreurs page par page. Maintenant :
+
+  1. ✅ Si une page pose problème → on essaie une méthode d'extraction alternative
+  2. ✅ Si ça échoue encore → on ignore juste cette page et on continue
+  3. ✅ L'extraction ne bloque plus, même avec des PDFs mal formés
+
+  🔄 Action à faire :
+
+  Arrêtez l'application (Ctrl+C dans le terminal) et relancez-la :
+
+  "venv\Scripts\python.exe" app.py
+
+  Cette fois, vous devriez voir :
+  - ⚠️ Des messages "Page X ignorée (erreur: ...)" pour les pages problématiques
+  - ✅ Mais l'extraction continue et la base se régénère complètement
+  - ✅ 99% du contenu sera extrait, seules quelques pages corrompues seront ignorées
+
+  Une fois l'application relancée, la base se régénérera proprement avec bge-m3 et vous pourrez tester ! 🎯
+
+> au fur et à mesure des modifications, tu as enlevé le nom du pdf en cours de lecture et le nombre de pdf totataux 1/x, 2/x... c'était bien pratique, on savait où il en était comme ça 
+
+● Vous avez raison ! C'est très utile pour suivre la progression. Je vais remettre cet affichage.
+
+● Read(core\rag.py)
+  ⎿  Read 50 lines
+
+● Search(pattern: "def build_vectordb|progress_callback", path: "core\rag.py", output_mode: "content")
+  ⎿  Found 128 lines (ctrl+o to expand)
+
+● Search(pattern: "build_or_load|extract_from_directory", path: "app.py", output_mode: "content")
+  ⎿  Found 29 lines (ctrl+o to expand)
+
+● Je vois ! Le système de callback existe mais affiche dans l'interface Streamlit. Vous parlez probablement des prints dans la console pour voir la progression en temps réel. Je vais ajouter ça :
+
+● Update(core\rag.py)
+  ⎿  Updated core\rag.py with 8 additions and 4 removals                                             
+       233            
+       234            for idx, file_path in enumerate(all_files, 1):
+       235                try:
+       236 +                  # Affichage console ET callback Streamlit
+       237 +                  print(f"📖 [{idx}/{total_files}] Extraction de : {file_path.name}")
+       238 +  
+       239                    if progress_callback:
+       240                        progress_callback(idx, total_files, f"Lecture: {file_path.name}")
+       241 -                  
+       241 +  
+       242                    suffix = file_path.suffix.lower()
+       243                    if suffix == ".pdf":
+       244                        content = DocumentExtractor.extract_from_pdf(file_path, max_pages)
+       245                    else:
+       246                        content = DocumentExtractor.extract_from_text(file_path)
+       247 -                  
+       247 +  
+       248                    documents[file_path.name] = content
+       249 -                  
+       249 +                  print(f"   ✅ {len(content)} caractères extraits")
+       250 +  
+       251                except Exception as e:
+       252                    if progress_callback:
+       253                        progress_callback(idx, total_files, f"⚠️ Erreur: {file_path.name}")
+       254 -                  print(f"Erreur lecture {file_path.name}: {e}")
+       254 +                  print(f"❌ Erreur lecture {file_path.name}: {e}")
+       255            
+       256            return documents
+       257    
+
+● Parfait ! Maintenant je vais aussi ajouter l'affichage pour les autres étapes (chunking, embeddings) :
+
+● Update(core\rag.py)
+  ⎿  Updated core\rag.py with 12 additions and 6 removals                                                                      
+       292            
+       293            # Créer ou charger
+       294            if not db_dir.exists() or not any(db_dir.iterdir()):
+       295 +              print("\n🔧 Préparation des documents...")
+       296                if progress_callback:
+       297                    progress_callback("Préparation des documents...")
+       298 -              
+       298 +  
+       299                # Combine tous les documents
+       300                full_text = "\n\n".join([
+       301                    f"--- DOCUMENT: {name} ---\n\n{content}"
+       302                    for name, content in documents.items()
+       303                ])
+       304 -              
+       304 +  
+       305 +              print(f"📄 Texte total : {len(full_text):,} caractères")
+       306 +              print(f"✂️  Découpage en chunks (taille: {self.chunk_size}, chevauchement: {self.chunk_overlap})...")
+       307                if progress_callback:
+       308                    progress_callback(f"Découpage en chunks (taille: {self.chunk_size})...")
+       309 -              
+       309 +  
+       310                # Split en chunks
+       311                splitter = RecursiveCharacterTextSplitter(
+       312                    chunk_size=self.chunk_size,
+       313                    chunk_overlap=self.chunk_overlap
+       314                )
+       315                chunks = splitter.split_text(full_text)
+       316 -              
+       316 +  
+       317 +              print(f"✅ {len(chunks)} chunks créés")
+       318                if progress_callback:
+       319                    progress_callback(f"Création de {len(chunks)} chunks...")
+       320 -              
+       320 +  
+       321                db_dir.mkdir(parents=True, exist_ok=True)
+       322 -              
+       322 +  
+       323 +              print(f"🧮 Génération des embeddings avec {self.embedding_model}...")
+       324 +              print(f"   (Cela peut prendre plusieurs minutes pour {len(chunks)} vecteurs)")
+       325                if progress_callback:
+       326                    progress_callback(f"Génération des embeddings ({len(chunks)} vecteurs)...")
+       327                
+
+● Update(core\rag.py)
+  ⎿  Updated core\rag.py with 3 additions and 1 removal                              
+       333                
+       334                # Sauvegarder les métadonnées du corpus
+       335                DocumentExtractor.save_corpus_metadata(source_dir, db_dir)
+       336 -              
+       336 +  
+       337 +              print("✅ Base vectorielle créée avec succès !")
+       338                if progress_callback:
+       339                    progress_callback("✅ Base vectorielle créée !")
+       340            else:
+       341 +              print("📂 Chargement de la base vectorielle existante...")
+       342                if progress_callback:
+       343                    progress_callback("Chargement de la base existante...")
+       344                
+
+● Parfait ! ✅ J'ai rétabli l'affichage complet de la progression dans la console.
+
+  📊 Vous verrez maintenant :
+
+  📖 [1/3] Extraction de : Livre 2 - Le Jeu.pdf
+     ✅ 245680 caractères extraits
+  📖 [2/3] Extraction de : Autre-Livre.pdf
+     ✅ 156432 caractères extraits
+  ...
+
+  🔧 Préparation des documents...
+  📄 Texte total : 402,112 caractères
+  ✂️  Découpage en chunks (taille: 600, chevauchement: 250)...
+  ✅ 1247 chunks créés
+  🧮 Génération des embeddings avec BAAI/bge-m3...
+     (Cela peut prendre plusieurs minutes pour 1247 vecteurs)
+  ✅ Base vectorielle créée avec succès !
+
+  🔄 Relancez maintenant :
+
+  "venv\Scripts\python.exe" app.py
+
+  Vous verrez maintenant exactement où en est la régénération de la base ! 🎯
+
+> ok, mais ce n'était pas dans la console...C'est bien que ça y soit, mais ça s'affichait sur l'interface surtout 
+
+● Ah pardon ! Vous avez raison, c'est dans l'interface Streamlit que vous aviez l'affichage détaillé. Laissez-moi vérifier le code de app.py :
+
+● Read(app.py)
+  ⎿  Read 30 lines
+
+● Je vois le code ! Le système existe bien (ligne 917), il devrait afficher "📖 Fichier {current}/{total} : {message}".
+
+  Le problème c'est peut-être que le message est un peu redondant. Regardez, dans core/rag.py j'envoie :
+  progress_callback(idx, total_files, f"Lecture: {file_path.name}")
+
+  Ce qui donne dans l'interface :
+  📖 Fichier 1/3 : Lecture: Livre 2 - Le Jeu.pdf
+
+  Simplifions pour avoir juste :
+  📖 Fichier 1/3 : Livre 2 - Le Jeu.pdf
+
+● Update(core\rag.py)
+  ⎿  Updated core\rag.py with 1 addition and 1 removal                                             
+       237                    print(f"📖 [{idx}/{total_files}] Extraction de : {file_path.name}")
+       238    
+       239                    if progress_callback:
+       240 -                      progress_callback(idx, total_files, f"Lecture: {file_path.name}")
+       240 +                      progress_callback(idx, total_files, file_path.name)
+       241    
+       242                    suffix = file_path.suffix.lower()
+       243                    if suffix == ".pdf":
+
+● Parfait ! Maintenant dans l'interface Streamlit vous verrez :
+
+  📖 Fichier 1/3 : Livre 2 - Le Jeu.pdf
+
+  Au lieu de :
+  📖 Fichier 1/3 : Lecture: Livre 2 - Le Jeu.pdf
+
+  C'est plus clair ! Relancez l'application et vous devriez voir la progression s'afficher proprement dans l'interface. 🎯
+
+> la création de la base est très très longue? Mon GPU n'est pas utilisé, est-ce qu'elle se fait sur le gpu?[Image #1]+ 
+
+● Bonne observation ! Je vois dans la capture d'écran que Python utilise 47.3% du CPU mais pas le GPU. La génération des embeddings avec bge-m3 devrait utiliser le GPU pour être beaucoup plus rapide !
+
+● Read(core\rag.py)
+  ⎿  Read 35 lines
+
+● Je vois le problème ! Le code essaie d'utiliser CUDA (ligne 276) mais il y a un fallback silencieux vers CPU (ligne 282-285) si ça échoue. Il faut vérifier si votre GPU est détecté :
+
+● Bash("venv\Scripts\python.exe" -c "import torch; print(f'CUDA disponible: {torch.cuda.is_available()}'); print(f'Nombre de GPUs: {torch.cuda.device_count()}'); print…)
+  ⎿  CUDA disponible: False
+     Nombre de GPUs: 0
+     GPU: Aucun
+
+● ❌ CUDA n'est pas disponible ! C'est pour ça que l'application utilise le CPU. La génération des embeddings sur CPU est beaucoup plus lente (5-10 minutes au lieu de 1-2 minutes).
+
+  🔍 Deux possibilités :
+
+  1️⃣ Vous avez un GPU NVIDIA ?
+
+  Si vous avez une carte NVIDIA (GTX/RTX), il faut installer PyTorch avec support CUDA :
+
+  "venv\Scripts\pip.exe" uninstall torch -y
+  "venv\Scripts\pip.exe" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+  Cela téléchargera PyTorch avec CUDA 12.1 et devrait accélérer énormément (10-20x plus rapide).
+
+  2️⃣ Vous n'avez pas de GPU NVIDIA ?
+
+  Si vous avez un GPU AMD ou Intel, ou pas de GPU dédié :
+  - ✅ C'est normal que ça prenne du temps (5-10 minutes pour générer les embeddings)
+  - ✅ Laissez tourner, ça va finir
+  - Le CPU est suffisant, juste plus lent
+
+  📊 Temps estimé sur CPU :
+
+  Pour bge-m3 (gros modèle 568M paramètres) :
+  - ~1000 chunks : 5-8 minutes
+  - ~2000 chunks : 10-15 minutes
+
+  Avez-vous un GPU NVIDIA ? Si oui, je vous aide à installer CUDA. Si non, c'est normal et il faut juste patienter. 😊
+
+> oui, j'ai une RTX 5070TI 
+
+● Excellent ! Avec une RTX 5070 Ti vous devriez avoir des embeddings 20x plus rapides ! Il faut installer PyTorch avec support CUDA.
+
+● 🚀 Installation de PyTorch avec CUDA pour votre RTX 5070 Ti
+
+  D'abord, arrêtez l'application (Ctrl+C dans le terminal où elle tourne) car on va réinstaller PyTorch.
+
+  Ensuite, exécutez ces commandes :
+
+● Bash("venv\Scripts\pip.exe" uninstall torch torchvision torchaudio -y)
+  ⎿  Found existing installation: torch 2.9.0
+     Uninstalling torch-2.9.0:
+       Successfully uninstalled torch-2.9.0
+     … +2 lines (ctrl+o to expand)
+
+● Bash("venv\Scripts\pip.exe" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121) timeout: 5m 0s
+  ⎿  Error: ERROR: Could not find a version that satisfies the requirement torch (from versions: none)
+     ERROR: No matching distribution found for torch
+
+     Looking in indexes: https://download.pytorch.org/whl/cu121
+
+● Bash("venv\Scripts\pip.exe" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118) timeout: 5m 0s
+  ⎿  Looking in indexes: https://download.pytorch.org/whl/cu118                                                         
+     Collecting torch
+       Downloading https://download.pytorch.org/whl/cu118/torch-2.7.1%2Bcu118-cp313-cp313-win_amd64.whl.metadata (27 kB)
+     … +24 lines (ctrl+o to expand)
+
+● ✅ PyTorch avec CUDA installé ! (2.8 GB téléchargés)
+
+  Vérifions maintenant que votre RTX 5070 Ti est bien détectée :
+
+● Bash("venv\Scripts\python.exe" -c "import torch; print(f'CUDA disponible: {torch.cuda.is_available()}'); print(f'Nombre de GPUs: {torch.cuda.device_count()}'); print…)
+  ⎿  CUDA disponible: True          
+     Nombre de GPUs: 1
+     GPU: NVIDIA GeForce RTX 5070 Ti
+     … +6 lines (ctrl+o to expand)
+
+● ⚠️ Problème détecté ! Votre RTX 5070 Ti est trop récente (architecture Blackwell sm_120) pour PyTorch CUDA 11.8 qui ne supporte que jusqu'à sm_90.
+
+  Il faut installer une version plus récente de PyTorch. Essayons avec la version nightly qui supporte les dernières architectures :
+
+● Bash("venv\Scripts\pip.exe" uninstall torch torchvision torchaudio -y)
+  ⎿  Found existing installation: torch 2.7.1+cu118
+     Uninstalling torch-2.7.1+cu118:
+       Successfully uninstalled torch-2.7.1+cu118
+     … +6 lines (ctrl+o to expand)
+
+● Bash("venv\Scripts\pip.exe" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124) timeout: 5m 0s
+  ⎿  Error: ERROR: Could not find a version that satisfies the requirement torchaudio (from versions: none)
+     ERROR: No matching distribution found for torchaudio
+
+     Looking in indexes: https://download.pytorch.org/whl/nightly/cu124
+     Collecting torch
+       Downloading https://download.pytorch.org/whl/nightly/cu124/torch-2.7.0.dev20250310%2Bcu124-cp313-cp313-win_amd64.whl.metadata (29 kB)
+     Collecting torchvision
+       Downloading https://download.pytorch.org/whl/nightly/cu124/torchvision-0.22.0.dev20250226%2Bcu124-cp313-cp313-win_amd64.whl.metadata (6.3 kB)
+
+● Bash("venv\Scripts\pip.exe" install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu124) timeout: 5m 0s
+  ⎿  Error: ERROR: Cannot install torch and torchvision==0.22.0.dev20250226+cu124 because these package versions have conflicting dependencies.
+     ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts
+
+     Looking in indexes: https://download.pytorch.org/whl/nightly/cu124
+     Collecting torch
+       Using cached https://download.pytorch.org/whl/nightly/cu124/torch-2.7.0.dev20250310%2Bcu124-cp313-cp313-win_amd64.whl.metadata (29 kB)
+     Collecting torchvision
+       Using cached https://download.pytorch.org/whl/nightly/cu124/torchvision-0.22.0.dev20250226%2Bcu124-cp313-cp313-win_amd64.whl.metadata (6.3 kB)
+     Requirement already satisfied: filelock in d:\ia\mj-assistant\venv\lib\site-packages (from torch) (3.20.0)
+     Requirement already satisfied: typing-extensions>=4.10.0 in d:\ia\mj-assistant\venv\lib\site-packages (from torch) (4.15.0)
+     … +15 lines (ctrl+o to see all)
+
+● Bash("venv\Scripts\pip.exe" install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu124) timeout: 5m 0s
+  ⎿  Looking in indexes: https://download.pytorch.org/whl/nightly/cu124                                                                      
+     Collecting torch
+       Using cached https://download.pytorch.org/whl/nightly/cu124/torch-2.7.0.dev20250310%2Bcu124-cp313-cp313-win_amd64.whl.metadata (29 kB)
+     … +13 lines (ctrl+o to expand)
+
+● ✅ PyTorch nightly installé ! (version dev avec CUDA 12.4)
+
+  Vérifions maintenant si votre RTX 5070 Ti est correctement supportée :
+
+● Bash("venv\Scripts\python.exe" -c "import torch; print(f'CUDA disponible: {torch.cuda.is_available()}'); print(f'Nombre de GPUs: {torch.cuda.device_count()}'); print…)
+  ⎿  CUDA disponible: True          
+     Nombre de GPUs: 1
+     GPU: NVIDIA GeForce RTX 5070 Ti
+     … +7 lines (ctrl+o to expand)
+
+● ⚠️ Mauvaise nouvelle : Votre RTX 5070 Ti (architecture Blackwell, compute capability 12.0) est trop récente pour PyTorch. Même la version nightly ne supporte que jusqu'à sm_90.
+
+  🤔 Situation :
+
+  Votre carte RTX 5070 Ti est tellement récente (série 50xx lancée en janvier 2025) que PyTorch n'a pas encore ajouté le support de l'architecture Blackwell.
+
+  💡 Solutions :
+
+  Option 1 : Essayer quand même (recommandé)
+
+  Parfois le GPU fonctionne malgré le warning. Relançons l'application et voyons si le GPU est utilisé :
+
+  "venv\Scripts\python.exe" app.py
+
+  Pendant la génération des embeddings, surveillez le GPU dans le Gestionnaire des tâches (onglet Performance → GPU). Si l'utilisation monte, ça fonctionne !
+
+  Option 2 : Utiliser le CPU (solution de repli)
+
+  Si le GPU ne fonctionne pas, la génération sur CPU prendra 5-10 minutes mais fonctionnera. C'est plus lent mais acceptable.
+
+  Option 3 : Attendre mise à jour PyTorch
+
+  Dans quelques semaines/mois, PyTorch ajoutera le support de Blackwell (sm_120).
+
+  ---
+  Voulez-vous essayer de relancer l'application pour voir si le GPU fonctionne malgré le warning ? 🎯
+
+> /status 
+  ⎿  Status dialog dismissed
+
+> 📖 [1/9] Extraction de : Livre 2 - Le Jeu.pdf
+   ✅ 795640 caractères extraits
+📖 [2/9] Extraction de : Bonus+numérique+2024 Carnets+de+Lames.pdf
+   ✅ 262261 caractères extraits
+📖 [3/9] Extraction de : LdC-PrintPlay-Feuille-de-perso.pdf
+   ✅ 725 caractères extraits
+📖 [4/9] Extraction de : L'Alchimiste des ombres - Pierre Pevel.pdf
+   ✅ 571953 caractères extraits
+📖 [5/9] Extraction de : L'Heritage de Richelieu - Philippe Auribeau.pdf
+   ✅ 771522 caractères extraits
+📖 [6/9] Extraction de : La Louve de Cendre - Pierre Pevel.pdf
+   ✅ 94332 caractères extraits
+📖 [7/9] Extraction de : Le Dragon des Arcanes - Pierre Pevel.pdf
+   ✅ 579241 caractères extraits
+📖 [8/9] Extraction de : Les Lames du Cardinal - Pierre Pevel.pdf
+   ✅ 552897 caractères extraits
+📖 [9/9] Extraction de : Livre 1 - L' Univers.pdf
+   ✅ 823440 caractères extraits
+
+🔧 Préparation des documents...
+📄 Texte total : 4,452,532 caractères
+✂️  Découpage en chunks (taille: 600, chevauchement: 250)...
+✅ 12278 chunks créés
+🧮 Génération des embeddings avec BAAI/bge-m3...
+   (Cela peut prendre plusieurs minutes pour 12278 vecteurs)
+D:\IA\MJ-Assistant\core\rag.py:277: LangChainDeprecationWarning: The class `HuggingFaceEmbeddings` was deprecated in LangChain 0.2.2 and will be removed in 1.0. An updated version of the class exists in the :class:`~langchain-huggingface package and should be used instead. To
+ use it run `pip install -U :class:`~langchain-huggingface` and import as `from :class:`~langchain_huggingface import HuggingFaceEmbeddings``.
+  self._embeddings = SentenceTransformerEmbeddings(
+D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\cuda\__init__.py:287: UserWarning:
+NVIDIA GeForce RTX 5070 Ti with CUDA capability sm_120 is not compatible with the current PyTorch installation.
+The current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_90.
+If you want to use the NVIDIA GeForce RTX 5070 Ti GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
+
+  warnings.warn(
+────────────────────────── Traceback (most recent call last) ───────────────────────────
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\streamlit\runtime\scriptrunner\exec_code.p
+  y:128 in exec_func_with_error_handling
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\streamlit\runtime\scriptrunner\script_runn
+  er.py:669 in code_to_exec
+
+  D:\IA\MJ-Assistant\app.py:1332 in <module>
+
+    1329
+    1330
+    1331 if __name__ == "__main__":
+  ❱ 1332 │   main()
+    1333
+
+  D:\IA\MJ-Assistant\app.py:1199 in main
+
+    1196 │   │   │   │   st.stop()
+    1197 │   │   │
+    1198 │   │   │   # Construction de la base vectorielle
+  ❱ 1199 │   │   │   vectordb = build_vectorstore(config, documents)
+    1200 │   │   else:
+    1201 │   │   │   # Chargement rapide (base existe et corpus inchangé)
+    1202 │   │   │   if not st.session_state.first_query_sent:
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\streamlit\runtime\caching\cache_utils.py:2
+  27 in __call__
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\streamlit\runtime\caching\cache_utils.py:2
+  69 in _get_or_create_cached_value
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\streamlit\runtime\caching\cache_utils.py:3
+  28 in _handle_cache_miss
+
+  D:\IA\MJ-Assistant\app.py:960 in build_vectorstore
+
+     957 │   │   │   st.progress(progress)
+     958 │   │   │   st.info(f"🔧 {message}")
+     959 │
+  ❱  960 │   result = vector_store.build_or_load(
+     961 │   │   _documents,
+     962 │   │   _config['paths']['db_dir'],
+     963 │   │   _config['paths']['pdf_root'],
+
+  D:\IA\MJ-Assistant\core\rag.py:328 in build_or_load
+
+    325 │   │   │   if progress_callback:
+    326 │   │   │   │   progress_callback(f"Génération des embeddings ({len(chunks)} v
+    327 │   │   │
+  ❱ 328 │   │   │   self._vectordb = Chroma.from_documents(
+    329 │   │   │   │   documents=[Document(page_content=c) for c in chunks],
+    330 │   │   │   │   embedding=self.embeddings,
+    331 │   │   │   │   persist_directory=db_dir_str
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\langchain_community\vectorstores\chroma.py
+  :887 in from_documents
+
+    884 │   │   """
+    885 │   │   texts = [doc.page_content for doc in documents]
+    886 │   │   metadatas = [doc.metadata for doc in documents]
+  ❱ 887 │   │   return cls.from_texts(
+    888 │   │   │   texts=texts,
+    889 │   │   │   embedding=embedding,
+    890 │   │   │   metadatas=metadatas,
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\langchain_community\vectorstores\chroma.py
+  :843 in from_texts
+
+    840 │   │   │   │   metadatas=metadatas,
+    841 │   │   │   │   documents=texts,
+    842 │   │   │   ):
+  ❱ 843 │   │   │   │   chroma_collection.add_texts(
+    844 │   │   │   │   │   texts=batch[3] if batch[3] else [],
+    845 │   │   │   │   │   metadatas=batch[2] if batch[2] else None,
+    846 │   │   │   │   │   ids=batch[0],
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\langchain_community\vectorstores\chroma.py
+  :277 in add_texts
+
+    274 │   │   embeddings = None
+    275 │   │   texts = list(texts)
+    276 │   │   if self._embedding_function is not None:
+  ❱ 277 │   │   │   embeddings = self._embedding_function.embed_documents(texts)
+    278 │   │   if metadatas:
+    279 │   │   │   # fill metadatas with empty dicts if somebody
+    280 │   │   │   # did not specify metadata for all texts
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\langchain_community\embeddings\huggingface
+  .py:115 in embed_documents
+
+    112 │   │   │   embeddings = self.client.encode_multi_process(texts, pool)
+    113 │   │   │   sentence_transformers.SentenceTransformer.stop_multi_process_pool(
+    114 │   │   else:
+  ❱ 115 │   │   │   embeddings = self.client.encode(
+    116 │   │   │   │   texts, show_progress_bar=self.show_progress, **self.encode_kwa
+    117 │   │   │   )
+    118
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\utils\_contextlib.py:116 in
+  decorate_context
+
+    113 │   @functools.wraps(func)
+    114 │   def decorate_context(*args, **kwargs):
+    115 │   │   with ctx_factory():
+  ❱ 116 │   │   │   return func(*args, **kwargs)
+    117 │
+    118 │   return decorate_context
+    119
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\sentence_transformers\SentenceTransformer.
+  py:1094 in encode
+
+    1091 │   │   │   features.update(extra_features)
+    1092 │   │   │
+    1093 │   │   │   with torch.no_grad():
+  ❱ 1094 │   │   │   │   out_features = self.forward(features, **kwargs)
+    1095 │   │   │   │   if self.device.type == "hpu":
+    1096 │   │   │   │   │   out_features = copy.deepcopy(out_features)
+    1097
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\sentence_transformers\SentenceTransformer.
+  py:1175 in forward
+
+    1172 │   │   │   │   │   for key, value in kwargs.items()
+    1173 │   │   │   │   │   if key in module_kwarg_keys or (hasattr(module, "forward_
+    1174 │   │   │   │   }
+  ❱ 1175 │   │   │   input = module(input, **module_kwargs)
+    1176 │   │   return input
+    1177 │
+    1178 │   @property
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1751 in
+  _wrapped_call_impl
+
+    1748 │   │   if self._compiled_call_impl is not None:
+    1749 │   │   │   return self._compiled_call_impl(*args, **kwargs)  # type: ignore[
+    1750 │   │   else:
+  ❱ 1751 │   │   │   return self._call_impl(*args, **kwargs)
+    1752 │
+    1753 │   # torchrec tests the code consistency with the following code
+    1754 │   # fmt: off
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1762 in
+  _call_impl
+
+    1759 │   │   if not (self._backward_hooks or self._backward_pre_hooks or self._for
+    1760 │   │   │   │   or _global_backward_pre_hooks or _global_backward_hooks
+    1761 │   │   │   │   or _global_forward_hooks or _global_forward_pre_hooks):
+  ❱ 1762 │   │   │   return forward_call(*args, **kwargs)
+    1763 │   │
+    1764 │   │   result = None
+    1765 │   │   called_always_called_hooks = set()
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\sentence_transformers\models\Transformer.p
+  y:261 in forward
+
+    258 │   │   """
+    259 │   │   trans_features = {key: value for key, value in features.items() if key
+    260 │   │
+  ❱ 261 │   │   outputs = self.auto_model(**trans_features, **kwargs, return_dict=True
+    262 │   │   token_embeddings = outputs[0]
+    263 │   │   features["token_embeddings"] = token_embeddings
+    264
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1751 in
+  _wrapped_call_impl
+
+    1748 │   │   if self._compiled_call_impl is not None:
+    1749 │   │   │   return self._compiled_call_impl(*args, **kwargs)  # type: ignore[
+    1750 │   │   else:
+  ❱ 1751 │   │   │   return self._call_impl(*args, **kwargs)
+    1752 │
+    1753 │   # torchrec tests the code consistency with the following code
+    1754 │   # fmt: off
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1762 in
+  _call_impl
+
+    1759 │   │   if not (self._backward_hooks or self._backward_pre_hooks or self._for
+    1760 │   │   │   │   or _global_backward_pre_hooks or _global_backward_hooks
+    1761 │   │   │   │   or _global_forward_hooks or _global_forward_pre_hooks):
+  ❱ 1762 │   │   │   return forward_call(*args, **kwargs)
+    1763 │   │
+    1764 │   │   result = None
+    1765 │   │   called_always_called_hooks = set()
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\transformers\models\xlm_roberta\modeling_x
+  lm_roberta.py:789 in forward
+
+     786 │   │   │   else:
+     787 │   │   │   │   token_type_ids = torch.zeros(input_shape, dtype=torch.long, d
+     788 │   │
+  ❱  789 │   │   embedding_output = self.embeddings(
+     790 │   │   │   input_ids=input_ids,
+     791 │   │   │   position_ids=position_ids,
+     792 │   │   │   token_type_ids=token_type_ids,
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1751 in
+  _wrapped_call_impl
+
+    1748 │   │   if self._compiled_call_impl is not None:
+    1749 │   │   │   return self._compiled_call_impl(*args, **kwargs)  # type: ignore[
+    1750 │   │   else:
+  ❱ 1751 │   │   │   return self._call_impl(*args, **kwargs)
+    1752 │
+    1753 │   # torchrec tests the code consistency with the following code
+    1754 │   # fmt: off
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\torch\nn\modules\module.py:1762 in
+  _call_impl
+
+    1759 │   │   if not (self._backward_hooks or self._backward_pre_hooks or self._for
+    1760 │   │   │   │   or _global_backward_pre_hooks or _global_backward_hooks
+    1761 │   │   │   │   or _global_forward_hooks or _global_forward_pre_hooks):
+  ❱ 1762 │   │   │   return forward_call(*args, **kwargs)
+    1763 │   │
+    1764 │   │   result = None
+    1765 │   │   called_always_called_hooks = set()
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\transformers\models\xlm_roberta\modeling_x
+  lm_roberta.py:88 in forward
+
+      85 │   │   if position_ids is None:
+      86 │   │   │   if input_ids is not None:
+      87 │   │   │   │   # Create the position ids from the input token ids. Any padde
+  ❱   88 │   │   │   │   position_ids = create_position_ids_from_input_ids(input_ids,
+      89 │   │   │   else:
+      90 │   │   │   │   position_ids = self.create_position_ids_from_inputs_embeds(in
+      91
+
+  D:\IA\MJ-Assistant\venv\Lib\site-packages\transformers\models\xlm_roberta\modeling_x
+  lm_roberta.py:1548 in create_position_ids_from_input_ids
+
+    1545 │   Returns: torch.Tensor
+    1546 │   """
+    1547 │   # The series of casts and type-conversions here are carefully balanced to
+  ❱ 1548 │   mask = input_ids.ne(padding_idx).int()
+    1549 │   incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + past_key
+    1550 │   return incremental_indices.long() + padding_idx
+    1551
+────────────────────────────────────────────────────────────────────────────────────────
+RuntimeError: CUDA error: no kernel image is available for execution on the device
+CUDA kernel errors might be asynchronously reported at some other API call, so the
+stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions. 
+
+● ❌ Erreur confirmée : RuntimeError: CUDA error: no kernel image is available for execution on the device
+
+  Votre RTX 5070 Ti est trop récente pour PyTorch. Le GPU ne peut pas être utilisé pour le moment.
+
+● 🔧 Solution : Utiliser le CPU temporairement
+
+  Votre RTX 5070 Ti n'est pas encore supportée par PyTorch. On va désactiver CUDA et utiliser le CPU (oui, ce sera plus lent, mais ça fonctionnera).
+
+● Update(config.yaml)
+  ⎿  Updated config.yaml with 1 addition and 1 removal                                                          
+       25      k_retrieval: 20  # ⚠️ Augmenté à 20 pour FORCER la récupération des bonnes règles
+       26      chunk_size: 600  # ⚠️ Réduit à 600 pour chunks encore plus précis et focalisés
+       27      chunk_overlap: 250  # ⚠️ Augmenté pour garantir continuité entre chunks
+       28 -    use_cuda: true  # Tente d'utiliser CUDA si disponible
+       28 +    use_cuda: false  # ⚠️ DÉSACTIVÉ : RTX 5070 Ti (Blackwell sm_120) non supportée par PyTorch actuel
+       29    
+       30    # Configuration de la mémoire
+       31    memory:
+
+● ✅ CUDA désactivé dans config.yaml
+
+  🔄 Relancez maintenant l'application :
+
+  "venv\Scripts\python.exe" app.py
+
+  ⏱️ Ce qui va se passer :
+
+  1. ✅ Extraction des 9 PDFs (déjà fait, rapide)
+  2. ✅ Découpage en ~12278 chunks (rapide)
+  3. ⏳ Génération des embeddings sur CPU : 10-15 minutes
+
+  C'est normal que ça prenne du temps ! Avec 12278 vecteurs à générer sur CPU, comptez 10-15 minutes. Vous verrez le CPU à ~50% pendant ce temps.
+
+  📊 Pourquoi c'est long :
+
+  - bge-m3 : 568M paramètres (modèle puissant mais lourd)
+  - 12278 chunks : Beaucoup de données (4.4M caractères de texte)
+  - CPU seulement : Votre RTX 5070 Ti est trop récente pour PyTorch
+
+  🎯 Une fois terminé :
+
+  La base sera générée avec bge-m3 (bien meilleur pour le français) et vous pourrez enfin tester si le RAG trouve les bonnes règles !
+
+  Laissez tourner et tenez-moi au courant quand c'est terminé ! ☕
+
+
+

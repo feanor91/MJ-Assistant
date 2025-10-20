@@ -5,6 +5,68 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [2.2.0] - 2025-10-18
+
+### ✨ Ajouté
+
+#### Mode Encyclopédique - Système de réponses longues
+- **Réponses détaillées et exhaustives** (300-500 mots minimum)
+  - Prompt système enrichi avec instructions explicites pour réponses longues
+  - Structure markdown recommandée avec 6 sections (Résumé, Explication détaillée, Mécaniques, Exemples, Contexte, Notes)
+  - Directives pour inclure TOUS les détails, exemples concrets, et contexte historique
+
+- **Augmentation du contexte RAG**
+  - Nouveau paramètre `k_retrieval_encyclo: 30` dans config.yaml
+  - **50% de contexte supplémentaire** par rapport au mode MJ (30 vs 20 chunks)
+  - Sélection intelligente du nombre de chunks selon le mode
+
+- **Optimisation de la température**
+  - Température automatiquement plafonnée à **0.3** en mode encyclopédique
+  - Garantit des réponses plus cohérentes et structurées
+  - Mode MJ conserve la température configurable par l'utilisateur
+
+- **Indicateur visuel**
+  - Message informatif "📚 Mode réponses détaillées activé" en mode encyclopédique
+  - Affichage du nombre de chunks utilisés (30) dans l'interface
+
+### 🔧 Modifié
+
+#### Architecture
+- `core/rag.py` : Template de prompt enrichi avec instructions détaillées pour mode encyclopédique
+- `app.py` : Logique de sélection intelligente du nombre de chunks et température selon le mode
+- `config.yaml` :
+  - Prompt système encyclopédique complètement refondu avec structure détaillée
+  - Ajout du paramètre `k_retrieval_encyclo`
+
+#### Comportement
+- Mode encyclopédique génère maintenant des réponses **beaucoup plus longues et approfondies**
+- Les réponses suivent une **structure markdown** avec sections claires
+- Meilleure utilisation du contexte disponible (tous les détails pertinents inclus)
+
+### 📚 Documentation
+
+- **README.md mis à jour**
+  - Section "Mode Encyclopédique" enrichie avec détails du système de réponses longues
+  - Nouvelle section "Personnaliser le mode encyclopédique"
+  - Exemples de configuration pour différents besoins (corpus petits/gros)
+  - Ajustements recommandés pour réponses plus longues ou plus concises
+
+- **CHANGELOG.md** : Documentation de la version 2.2.0
+
+### 🔄 Migration depuis 2.1.0
+
+Aucune action requise, les modifications sont automatiquement appliquées :
+
+1. Le mode encyclopédique utilise désormais automatiquement 30 chunks (vs 20)
+2. La température est automatiquement optimisée (≤0.3)
+3. Les réponses sont structurées et détaillées par défaut
+
+**Pour ajuster** :
+- Modifier `k_retrieval_encyclo` dans `config.yaml` pour plus/moins de détails
+- Personnaliser le prompt `encyclo_system` pour ajuster le style et la longueur
+
+---
+
 ## [2.1.0] - 2025-10-18
 
 ### ✨ Ajouté

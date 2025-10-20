@@ -1,0 +1,81 @@
+124
+0 L ’Astrologue en Prière
+Chez les dragons, il est celui qui sait, et qui annonce 
+de sombres présages. Il marque le commencement, et ses 
+augures décrivent le constant déclin de la race draconique.
+VD : Fatalité.
+M : Recrudescence des peurs superstitieuses.
+C : Occultisme.
+MD : Croyant, le personnage est persuadé que des forces 
+supérieures gouvernent la destinée. Il se montre volon-
+tiers Mystique, superstitieux, et peut se trouver en diffi-
+culté lorsqu’il est confronté au surnaturel. Il cherche en 
+permanence les signes qui le renseigneront sur le futur.
+Sortilèges typiques : fatalité, présages et divination.
+Permettent par exemple de :
+Déchiffrer des idiomes occultes : pour décoder des écrits 
+cryptiques, la Difficulté de la langue détermine la 
+Puissance à atteindre.
+Maudire un combattant : soustrait un niveau 
+d’Escrime et Bagarre par niveau de Puissance du sort 
+à un combattant.
+Infecter les blessures : oblige la cible à piocher autant 
+de cartes supplémentaires que la Puissance du sort 
+lors d’un Test d’évolution des blessures, et à appliquer 
+les effets de la carte la moins favorable.
+Rituels typiques : divination.
+Exemple : Rituel des grands présages.
+Puissance 6 (6 PE), durée une semaine (+4 PE), 
+3 cibles (+1 PE).
+Impératifs : un jeu de tarot originel.
+Ce rituel permet au ritualiste d’effectuer une prouesse 
+impossible aux simples arcanistes. La Puissance du rituel 
+permet de choisir trois arcanes et de les placer dans la 
+Rivière draconique, où ils persisteront une semaine durant.
+Modalités : Un tarot draconique, un cercle magique 
+tracé au sol.
+1 La Tisserande oubliée
+La Tisserande oubliée est la représentation de la mère 
+disparue, celle qui tisse les liens de la vie en offrant son 
+sang pour sa progéniture. Elle symbolise aussi le sacrifice, 
+qui permit aux dragons de survivre durant les heures 
+noires. Elle constitue un arcane chargé de regret, symbole 
+de la fertilité perdue des grands dragons.
+VD : Sacrifice.
+M : Mouches et vermine.
+C : Médecine.
+MD : Le personnage est Dévoué et consacre une grande 
+part de son temps à s’occuper des autres, quitte à sacrifier 
+son propre bien-être. Au sein du groupe, il est celui 
+qui fait face au danger pour ses compagnons, sans rien 
+attendre en retour.
+Sortilèges typiques : soin, sacrifice.
+Permettent par exemple de :
+Soigner à distance : restaure de la Résistance/Vitalité 
+sans toucher la cible.
+Sacrifier son sang pour gagner de la force : chaque point 
+de Puissance permet de dépenser 1 point de Ténacité/
+Résistance pour augmenter ses dégâts de 1 pendant la 
+durée du sort.
+Bénir une naissance : rend possible une naissance 
+difficile, y compris dans le cas de grossesses impliquant 
+humains et dragons.
+Rituels typiques : sacrifice.
+Exemple : Rituel du sang du guide.
+Puissance 4 (4 PE), 1000 hommes (+5 PE), durée 
+une semaine (+4 PE), contact.
+Impératifs : cercle ritualiste, chaudron de grande taille, 
+50 officiants (+3), une journée de cérémonie (+3), fils 
+enchantés (+1).
+Le ritualiste trace un cercle occulte et prend place en son 
+centre avec le chaudron. Il dispose les cibles tout autour, et 
+les relie à lui par un réseau de fils trempés dans son propre 
+sang. Il sacrifie alors les officiants et remplit le chaudron 
+avec leur sang. Lorsque des membres de l’armée groupée 
+autour de lui subissent des blessures, c’est le sang des sacrifiés 
+qui déborde du chaudron et non le leur. Jusqu’à 100 points 
+de Vitalité/Résistance peuvent être utilisés ainsi avant 
+épuisement du chaudron.
+Modalités : sang de Dragon Ancestral, cordons ombi-
+licaux, placenta de tarasque.
+© 2023 Elder Craft / Les Lames du Cardinal - Illustration par Loïc Muzy
