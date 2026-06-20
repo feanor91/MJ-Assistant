@@ -298,7 +298,7 @@ _MODE_PRESETS = {
         ],
         "temperature": 0.0,
         "top_p": 0.9,
-        "k_retrieval_encyclo": 15,
+        "k_retrieval_encyclo": 8,
         "source_filter": "rules_and_universe",
         "show_sources": True,
     },

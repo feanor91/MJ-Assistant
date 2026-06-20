@@ -430,6 +430,8 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         format_context = qa_chain["format_context"]
 
         # En mode encyclopédique : format context avec marqueurs de référence
+        # Limite à 1200 chars par chunk pour éviter de saturer le contexte LLM
+        _CHUNK_MAX_CHARS = 1200
         if mode == "Encyclopédique":
             def format_context(docs):
                 parts = []
@@ -440,7 +442,10 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                     ref_header = f"[Réf. {i} — {source}, p.{page}]"
                     if section:
                         ref_header += f" — {section}"
-                    parts.append(f"{ref_header}\n{doc.page_content}")
+                    content = doc.page_content
+                    if len(content) > _CHUNK_MAX_CHARS:
+                        content = content[:_CHUNK_MAX_CHARS] + "…"
+                    parts.append(f"{ref_header}\n{content}")
                 return "\n\n---\n\n".join(parts)
 
         # Score de pertinence réel via Chroma (0=hors-sujet, 1=parfait)
