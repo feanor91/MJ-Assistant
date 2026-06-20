@@ -1059,14 +1059,17 @@ def main():
                 )
 
             if _r['response'] and len(_r['response'].strip()) > 0:
-                # Détection de boucle de répétition (même phrase 3+ fois)
+                # Détection de boucle de répétition :
+                # - même phrase longue (>60 chars) répétée 4+ fois
+                # - OU patron suspect répété 3+ fois
+                # Seuil élevé pour éviter les faux positifs sur les réponses structurées
                 from collections import Counter as _Counter
-                _lines = [l.strip() for l in _r['response'].split('\n') if len(l.strip()) > 30]
+                _lines = [l.strip() for l in _r['response'].split('\n') if len(l.strip()) > 60]
                 _line_counts = _Counter(_lines)
-                _suspicious = ["une créature ou un lieu en danger", "selon le contexte fourni", "Il est également mentionné"]
+                _suspicious = ["une créature ou un lieu en danger", "selon le contexte fourni", "Il est également mentionné que"]
                 hallucination_detected = (
-                    any(c >= 3 for c in _line_counts.values()) or
-                    any(_r['response'].count(p) > 3 for p in _suspicious)
+                    any(c >= 4 for c in _line_counts.values()) or
+                    any(_r['response'].count(p) >= 3 for p in _suspicious)
                 )
 
                 if hallucination_detected:
