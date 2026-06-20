@@ -812,10 +812,11 @@ class RAGChain:
                     top_p=top_p,
                     num_ctx=num_ctx,
                     num_predict=num_predict,
+                    repeat_penalty=1.15,
                     **extra
                 )
             except TypeError:
-                # think= non supporté dans cette version — on retire
+                # think= ou repeat_penalty non supporté dans cette version
                 return ChatOllama(
                     model=model_name,
                     temperature=temperature,

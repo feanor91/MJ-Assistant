@@ -1015,149 +1015,11 @@ def main():
                             vectordb=vectordb
                         )
 
-                    # Marquer que la première requête a été envoyée
                     st.session_state.first_query_sent = True
-
-                    # Afficher la question posée
-                    st.markdown("### 💬 Question")
-                    st.info(f"**{active_query}**")
-
-                    # Affichage de la réponse
-                    st.markdown("### ✅ Réponse")
-
-                    # Avertissement si pertinence faible (RAG uniquement)
-                    if result.get('confidence') is not None and result['confidence'] < 0.3:
-                        st.warning(
-                            f"⚠️ **Pertinence faible ({result['confidence']:.0%})** — "
-                            "Les documents récupérés sont peut-être hors-sujet. "
-                            "Pour les questions de règles, utilise le mode **Encyclopédique** "
-                            "avec le filtre **Règles uniquement**."
-                        )
-
-                    if result['response'] and len(result['response'].strip()) > 0:
-                        # Détection d'hallucination potentielle
-                        suspicious_patterns = [
-                            "une créature ou un lieu en danger",  # Répétition suspecte
-                            "selon le contexte fourni",  # Phrase conclusive inventée
-                            "Ce sont les",  # Phrase conclusive inventée
-                        ]
-
-                        hallucination_detected = False
-                        for pattern in suspicious_patterns:
-                            if result['response'].count(pattern) > 3:  # Répété plus de 3 fois = suspect
-                                hallucination_detected = True
-                                break
-
-                        if hallucination_detected:
-                            st.error("⚠️ ALERTE : Hallucination potentielle détectée !")
-                            st.warning("""
-                            Le modèle semble avoir **inventé** du contenu (répétitions suspectes détectées).
-
-                            **Causes probables :**
-                            - Les chunks récupérés ne contiennent pas l'information complète
-                            - La question est trop large pour la recherche vectorielle
-
-                            **Solutions :**
-                            - Pose une question plus **ciblée** (ex: "Explique l'arcane 2")
-                            - Vérifie les sources ci-dessous pour voir ce qui est réellement dans le contexte
-                            - Augmente les chunks si nécessaire
-                            """)
-
-                            # Afficher la réponse suspecte
-                            from app_ui import render_character_viewer_old
-                            with st.expander("⚠️ Réponse suspecte (à vérifier)"):
-                                st.markdown(result['response'])
-                        else:
-                            st.markdown(result['response'])
-                    else:
-                        st.error("❌ Le modèle n'a pas généré de réponse.")
-                        st.warning("💡 **Causes possibles :**")
-                        st.info("""
-                        1. **Information incomplète** : Les chunks récupérés ne contiennent pas toute l'info demandée
-                        2. **Trop peu de chunks** : Pour des questions larges (ex: "liste les 22 arcanes"), augmente le nombre de chunks
-                        3. **Modèle trop strict** : Le modèle refuse de répondre partiellement
-
-                        **Solutions :**
-                        - ⬆️ Augmente le slider de chunks (essaie 30-50 pour des listes complètes)
-                        - 🎯 Pose une question plus ciblée (ex: "explique l'arcane X")
-                        - 🔄 Essaie un autre modèle (qwen2.5:14b ou mistral-nemo)
-                        """)
-
-                        # Afficher les sources pour aider au diagnostic
-                        if st.session_state.get('show_sources', True) and result.get('sources'):
-                            with st.expander("🔍 Sources récupérées (pour diagnostic)"):
-                                st.caption(f"Le système a trouvé {len(result['sources'])} chunks. Vérifie s'ils contiennent l'information recherchée.")
-                                for i, doc in enumerate(result['sources'][:5], 1):
-                                    st.markdown(f"**Chunk {i}** (source: {doc.metadata.get('source', 'inconnu')})")
-                                    preview = doc.page_content[:400].replace("\n", " ")
-                                    st.text(preview + "...")
-                                    st.markdown("---")
-
-                    # Confiance RAG (uniquement si on a utilisé le RAG)
-                    _caption_parts = []
-                    if result.get('confidence') is not None and result['confidence'] > 0:
-                        confidence_color = "🟢" if result['confidence'] > 0.7 else "🟡" if result['confidence'] > 0.4 else "🔴"
-                        _caption_parts.append(f"{confidence_color} Confiance RAG: {result['confidence']:.0%}")
-                    elif creative_mode:
-                        _caption_parts.append("✨ Narratif pur")
-
-                    # Métriques de performance
-                    if result.get('elapsed'):
-                        _caption_parts.append(f"⏱️ {result['elapsed']:.1f}s")
-                    if result.get('tokens_in'):
-                        _caption_parts.append(f"📥 {result['tokens_in']} tk")
-                    if result.get('tokens_out'):
-                        _caption_parts.append(f"📤 {result['tokens_out']} tk")
-
-                    if _caption_parts:
-                        st.caption(" · ".join(_caption_parts))
-
-                    # Sources citées (mode encyclopédique uniquement)
-                    if st.session_state.mode == "Encyclopédique" and result.get('cited_sources'):
-                        st.markdown("**📚 Sources :**")
-                        _msg_count = st.session_state.get('message_count', 0)
-                        _btn_cols = st.columns(min(len(result['cited_sources']), 5))
-                        for _i, _ref in enumerate(result['cited_sources']):
-                            _col = _btn_cols[_i % len(_btn_cols)]
-                            _page_lbl = f"p.{_ref['page']}" if _ref['page'] != '?' else _ref['source']
-                            with _col:
-                                if st.button(f"📄 {_page_lbl}", key=f"pdfref_{_ref['source']}_{_ref['page']}_{_msg_count}_{_i}"):
-                                    st.session_state._pdf_view = _ref
-                                    st.session_state._pdf_view_config = config
-                                    st.rerun()
-
-                    # Mode debug : afficher le contexte complet envoyé au modèle
-                    if st.session_state.get('show_debug_chunks', False):
-                        # Afficher quel filtre est actif
-                        filter_names = {
-                            "rules_only": "📖 Règles uniquement",
-                            "universe_only": "🌍 Univers + Romans",
-                            "rules_and_universe": "📖🌍 Règles + Univers (sans romans)"
-                        }
-                        current_source_filter = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
-                        active_filter = filter_names.get(current_source_filter, current_source_filter)
-
-                        with st.expander(f"🔍 DEBUG: Chunks récupérés ({len(result['sources'])} chunks)"):
-                            if result['sources']:
-                                st.info(f"🎯 Filtre actif : **{active_filter}**")
-                                st.warning("⚠️ Vérifiez si les informations recherchées sont présentes ci-dessous")
-                                for i, doc in enumerate(result['sources'], 1):
-                                    st.markdown(f"### Chunk {i}/{len(result['sources'])}")
-                                    # Afficher les métadonnées
-                                    if hasattr(doc, 'metadata') and doc.metadata:
-                                        st.caption(f"Source: {doc.metadata.get('source', 'inconnu')} | Catégorie: {doc.metadata.get('category', 'inconnu')}")
-                                    # Afficher le contenu complet
-                                    st.text_area(f"Contenu chunk {i}", doc.page_content, height=200, key=f"debug_chunk_{i}")
-                                    st.markdown("---")
-                            else:
-                                st.error("❌ Aucun chunk récupéré ! Problème de recherche RAG.")
-
-                    # Sources (affichage normal)
-                    if st.session_state.show_sources and result['sources']:
-                        with st.expander(f"📚 Sources ({len(result['sources'])} documents)"):
-                            for i, doc in enumerate(result['sources'], 1):
-                                preview = doc.page_content[:400].replace("\n", " ")
-                                st.markdown(f"**Source {i}:** {preview}...")
+                    # Persiste le résultat : survit aux reruns déclenchés par les boutons PDF
+                    st.session_state._last_result = result
+                    st.session_state._last_query = active_query
+                    st.session_state._last_creative_mode = creative_mode
 
                 except RuntimeError as e:
                     st.error(str(e))
@@ -1171,6 +1033,106 @@ def main():
                         st.error(f"❌ Erreur: {e}")
                         import traceback
                         st.exception(traceback.format_exc())
+
+        # ─── Affichage du dernier résultat ────────────────────────────────────
+        # Séparé du traitement pour survivre aux reruns (boutons PDF, etc.)
+        if st.session_state.get('_last_result'):
+            _r = st.session_state._last_result
+            _q = st.session_state._last_query
+            _cm = st.session_state.get('_last_creative_mode', False)
+
+            st.markdown("### 💬 Question")
+            st.info(f"**{_q}**")
+            st.markdown("### ✅ Réponse")
+
+            if _r.get('confidence') is not None and _r['confidence'] < 0.3:
+                st.warning(
+                    f"⚠️ **Pertinence faible ({_r['confidence']:.0%})** — "
+                    "Les documents récupérés sont peut-être hors-sujet. "
+                    "Pour les questions de règles, utilise le mode **Encyclopédique** "
+                    "avec le filtre **Règles uniquement**."
+                )
+
+            if _r['response'] and len(_r['response'].strip()) > 0:
+                # Détection de boucle de répétition (même phrase 3+ fois)
+                from collections import Counter as _Counter
+                _lines = [l.strip() for l in _r['response'].split('\n') if len(l.strip()) > 30]
+                _line_counts = _Counter(_lines)
+                _suspicious = ["une créature ou un lieu en danger", "selon le contexte fourni", "Il est également mentionné"]
+                hallucination_detected = (
+                    any(c >= 3 for c in _line_counts.values()) or
+                    any(_r['response'].count(p) > 3 for p in _suspicious)
+                )
+
+                if hallucination_detected:
+                    st.error("⚠️ ALERTE : Boucle de répétition détectée — réponse tronquée ci-dessous")
+                    st.warning("Le modèle a tourné en boucle. Essaie une question plus ciblée ou un autre modèle.")
+                    with st.expander("⚠️ Réponse (répétitions présentes)"):
+                        st.markdown(_r['response'])
+                else:
+                    st.markdown(_r['response'])
+            else:
+                st.error("❌ Le modèle n'a pas généré de réponse.")
+                if st.session_state.get('show_sources', True) and _r.get('sources'):
+                    with st.expander("🔍 Sources récupérées (pour diagnostic)"):
+                        for i, doc in enumerate(_r['sources'][:5], 1):
+                            st.markdown(f"**Chunk {i}** (source: {doc.metadata.get('source', 'inconnu')})")
+                            st.text(doc.page_content[:400].replace("\n", " ") + "...")
+                            st.markdown("---")
+
+            # Métriques (confiance + temps + tokens)
+            _caption_parts = []
+            if _r.get('confidence') is not None and _r['confidence'] > 0:
+                _cc = "🟢" if _r['confidence'] > 0.7 else "🟡" if _r['confidence'] > 0.4 else "🔴"
+                _caption_parts.append(f"{_cc} Confiance RAG: {_r['confidence']:.0%}")
+            elif _cm:
+                _caption_parts.append("✨ Narratif pur")
+            if _r.get('elapsed'):
+                _caption_parts.append(f"⏱️ {_r['elapsed']:.1f}s")
+            if _r.get('tokens_in'):
+                _caption_parts.append(f"📥 {_r['tokens_in']} tk")
+            if _r.get('tokens_out'):
+                _caption_parts.append(f"📤 {_r['tokens_out']} tk")
+            if _caption_parts:
+                st.caption(" · ".join(_caption_parts))
+
+            # Boutons sources citées (encyclopédique)
+            if st.session_state.mode == "Encyclopédique" and _r.get('cited_sources'):
+                st.markdown("**📚 Sources :**")
+                _btn_cols = st.columns(min(len(_r['cited_sources']), 5))
+                for _i, _ref in enumerate(_r['cited_sources']):
+                    _col = _btn_cols[_i % len(_btn_cols)]
+                    _page_lbl = f"p.{_ref['page']}" if _ref['page'] != '?' else _ref['source']
+                    with _col:
+                        if st.button(f"📄 {_page_lbl}", key=f"pdfref_{_ref['source']}_{_ref['page']}_{_i}"):
+                            st.session_state._pdf_view = _ref
+                            st.session_state._pdf_view_config = config
+
+            # Debug chunks
+            if st.session_state.get('show_debug_chunks', False) and _r.get('sources'):
+                filter_names = {
+                    "rules_only": "📖 Règles uniquement",
+                    "universe_only": "🌍 Univers + Romans",
+                    "rules_and_universe": "📖🌍 Règles + Univers (sans romans)"
+                }
+                _sf = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
+                with st.expander(f"🔍 DEBUG: Chunks récupérés ({len(_r['sources'])} chunks)"):
+                    st.info(f"🎯 Filtre actif : **{filter_names.get(_sf, _sf)}**")
+                    for i, doc in enumerate(_r['sources'], 1):
+                        st.markdown(f"### Chunk {i}/{len(_r['sources'])}")
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            st.caption(f"Source: {doc.metadata.get('source', '?')} | p.{doc.metadata.get('page', '?')} | {doc.metadata.get('category', '?')}")
+                        st.text_area(f"Contenu chunk {i}", doc.page_content, height=200, key=f"debug_chunk_{i}")
+                        st.markdown("---")
+
+            # Sources normales
+            if st.session_state.show_sources and _r.get('sources'):
+                with st.expander(f"📚 Sources ({len(_r['sources'])} documents)"):
+                    for i, doc in enumerate(_r['sources'], 1):
+                        _page = doc.metadata.get('page', '?')
+                        _src = doc.metadata.get('source', 'inconnu')
+                        st.markdown(f"**Source {i}** — {_src}, p.{_page}")
+                        st.text(doc.page_content[:400].replace("\n", " ") + "...")
 
         # Visionneuse PDF (persiste entre requêtes, s'affiche quand une source est cliquée)
         if '_pdf_view' in st.session_state and st.session_state._pdf_view:
