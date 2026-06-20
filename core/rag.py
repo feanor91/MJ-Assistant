@@ -904,6 +904,12 @@ Ta réponse :"""
 Mémoire des derniers échanges :
 {short_memory}
 
+🔴 INSTRUCTION PRIORITAIRE — LIS CECI AVANT TOUT :
+Si le contexte ci-dessous contient une section "RÉPONSE DIRECTE", son contenu EST la réponse exacte.
+→ Copie ce contenu textuellement dans ta réponse et cite avec (Réf.X).
+→ Une définition courte avec nom + VD (Valeur Dramatique) est une définition COMPLÈTE.
+→ NE DIS JAMAIS "il n'y a pas de définition" si cette section est présente.
+
 ===== CONTEXTE (extraits des documents) =====
 {{context}}
 ===== FIN DU CONTEXTE =====
@@ -912,16 +918,10 @@ Question : {{question}}
 
 {level_instruction}
 
-🔴 RÈGLE ABSOLUE — LIS AVANT DE RÉPONDRE :
-Si un chunk marqué [⭐ CORRESPONDANCE DIRECTE] est présent dans le contexte :
-→ Son contenu EST la réponse. Utilise-le intégralement, même s'il est court.
-→ NE DIS JAMAIS "il n'y a pas de définition" si ce marqueur existe.
-→ Un chunk court avec "VD:", "##", ou le nom exact du sujet = définition complète.
-
 ⚠️ INSTRUCTIONS :
-1. Cherche les chunks marqués [⭐ CORRESPONDANCE DIRECTE] — ce sont les plus pertinents
+1. Si le contexte contient une section "RÉPONSE DIRECTE" → commence par citer son contenu avec (Réf.X)
 2. Ignore les passages purement narratifs (scénarios, histoires sans règles)
-3. Cite directement le texte pertinent, avec (Réf.X) après chaque information
+3. Cite chaque information avec (Réf.X) après elle
 4. STOP dès que tu as répondu. Ne répète JAMAIS une information déjà énoncée.
 5. Si AUCUN chunk ne contient le sujet demandé, dis-le clairement
 

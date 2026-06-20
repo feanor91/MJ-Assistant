@@ -438,6 +438,7 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
             _query_words = set(w.lower() for w in _re2.findall(r'\w{4,}', query))
 
             def format_context(docs):
+                direct_hits = []
                 parts = []
                 for i, doc in enumerate(docs, 1):
                     page = doc.metadata.get('page', '?')
@@ -450,15 +451,29 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                     # Détecte si ce chunk contient directement le sujet demandé
                     _content_words = set(w.lower() for w in _re2.findall(r'\w{4,}', content))
                     _overlap = len(_query_words & _content_words)
-                    _has_title = any(f"## {w}" in content.lower() or f"# {w}" in content.lower()
-                                     for w in _query_words)
+                    # Cherche si un mot-clé apparaît dans une ligne de titre (## ...)
+                    _title_line = next((ln for ln in content.split('\n') if ln.strip().startswith('#')), '')
+                    _has_title = bool(_title_line) and any(w in _title_line.lower() for w in _query_words)
                     _is_direct = _has_title or _overlap >= max(2, len(_query_words) * 0.4)
 
-                    ref_header = f"[{'⭐ CORRESPONDANCE DIRECTE — ' if _is_direct else ''}Réf. {i} — {source}, p.{page}]"
+                    if _is_direct:
+                        direct_hits.append((i, source, page, content))
+
+                    ref_header = f"[Réf. {i} — {source}, p.{page}]"
                     if section:
                         ref_header += f" — {section}"
                     parts.append(f"{ref_header}\n{content}")
-                return "\n\n---\n\n".join(parts)
+
+                result = ""
+                if direct_hits:
+                    result += ">>> RÉPONSE DIRECTE — CONTENU À UTILISER EN PRIORITÉ <<<\n"
+                    result += "=" * 60 + "\n"
+                    for i, source, page, content in direct_hits:
+                        result += f"[Réf. {i} — {source}, p.{page}]\n{content}\n"
+                    result += "=" * 60 + "\n\n"
+
+                result += "\n\n---\n\n".join(parts)
+                return result
 
         # Score de pertinence réel via Chroma (0=hors-sujet, 1=parfait)
         confidence = 0.0
