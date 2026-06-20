@@ -102,6 +102,49 @@ def validate_ollama_installation() -> bool:
         return False
 
 
+def _is_ollama_running() -> bool:
+    """Vérifie si le serveur Ollama répond sur le port 11434"""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", 11434), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_ollama_running() -> bool:
+    """Démarre Ollama s'il n'est pas déjà en cours d'exécution.
+
+    Returns True si Ollama est prêt, False si impossible de le démarrer.
+    """
+    import time
+
+    if _is_ollama_running():
+        return True
+
+    if not validate_ollama_installation():
+        return False
+
+    # Lancer ollama serve en arrière-plan
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        )
+    except FileNotFoundError:
+        return False
+
+    # Attendre jusqu'à 15 secondes que le serveur soit prêt
+    for _ in range(15):
+        time.sleep(1)
+        if _is_ollama_running():
+            return True
+
+    return False
+
+
 def format_file_size(size_bytes: int) -> str:
     """Formate une taille de fichier en unités lisibles"""
     for unit in ['B', 'KB', 'MB', 'GB']:

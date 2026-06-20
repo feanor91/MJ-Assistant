@@ -11,7 +11,43 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 import streamlit as st
 
-# Ordre de préférence pour l'extraction PDF :
+# Imports LangChain - obligatoires
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_ollama import ChatOllama
+from langchain_core.tools import tool
+from langchain_core.runnables import RunnablePassthrough
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# Import de l'agent pour les outils personnalisés
+try:
+    from langchain.agents import create_react_agent, AgentExecutor
+except ImportError:
+    try:
+        from langchain.agents import create_tool_calling_agent, AgentExecutor
+    except ImportError:
+        try:
+            from langgraph.prebuilt import create_react_agent
+        except ImportError:
+            create_react_agent = None
+            create_tool_calling_agent = None
+
+try:
+    from langchain_ollama import ChatOllama
+    OllamaLLM_available = True
+except ImportError:
+    OllamaLLM_available = False
+
+try:
+    from sentence_transformers import CrossEncoder
+    RERANKER_AVAILABLE = True
+except ImportError:
+    RERANKER_AVAILABLE = False
+
+# Ordre de preference pour l'extraction PDF :
 # 1. PyMuPDF (fitz) - MEILLEUR pour les PDFs multi-colonnes
 # 2. pdfplumber - Bon mais mélange parfois les colonnes
 # 3. PyPDF2 - Fallback basique
@@ -29,24 +65,15 @@ except ImportError:
         import PyPDF2
         USE_PDFPLUMBER = False
 
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
-from langchain.schema.retriever import BaseRetriever
-from langchain.callbacks.manager import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
+from langchain_core.callbacks import BaseCallbackHandler
 
 try:
-    from langchain_ollama import OllamaLLM
+    from langchain_ollama import ChatOllama
     OllamaLLM_available = True
 except ImportError:
-    try:
-        from langchain_community.llms import Ollama as OllamaLLM
-        OllamaLLM_available = True
-    except ImportError:
-        OllamaLLM_available = False
+    OllamaLLM_available = False
 
 # Import pour re-ranking
 try:
@@ -359,13 +386,13 @@ class VectorStore:
         if self._embeddings is None:
             try:
                 device = "cuda" if self.use_cuda else "cpu"
-                self._embeddings = SentenceTransformerEmbeddings(
+                self._embeddings = HuggingFaceEmbeddings(
                     model_name=self.embedding_model,
                     model_kwargs={"device": device}
                 )
             except Exception:
                 # Fallback to CPU
-                self._embeddings = SentenceTransformerEmbeddings(
+                self._embeddings = HuggingFaceEmbeddings(
                     model_name=self.embedding_model
                 )
         return self._embeddings
@@ -520,15 +547,24 @@ class RAGChain:
         # Initialiser le re-ranker si activé
         self.reranker = None
         if config['rag'].get('enable_reranking', False) and RERANKER_AVAILABLE:
+            rerank_model = config['rag'].get('rerank_model', 'BAAI/bge-reranker-v2-m3')
+            device = "cuda" if config['rag'].get('use_cuda', False) else "cpu"
             try:
-                rerank_model = config['rag'].get('rerank_model', 'BAAI/bge-reranker-v2-m3')
-                device = "cuda" if config['rag'].get('use_cuda', False) else "cpu"
                 print(f"🔧 Chargement du re-ranker : {rerank_model} sur {device}...")
                 self.reranker = CrossEncoder(rerank_model, device=device)
                 print("✅ Re-ranker chargé avec succès")
             except Exception as e:
-                print(f"⚠️ Impossible de charger le re-ranker : {e}")
-                self.reranker = None
+                if device == "cuda":
+                    print(f"⚠️ CUDA indisponible pour le re-ranker ({e}), bascule sur CPU...")
+                    try:
+                        self.reranker = CrossEncoder(rerank_model, device="cpu")
+                        print("✅ Re-ranker chargé sur CPU")
+                    except Exception as e2:
+                        print(f"⚠️ Impossible de charger le re-ranker sur CPU : {e2}")
+                        self.reranker = None
+                else:
+                    print(f"⚠️ Impossible de charger le re-ranker : {e}")
+                    self.reranker = None
 
     def rerank_documents(self, query: str, documents: List, k: int) -> List:
         """Re-rank les documents selon leur pertinence avec la query"""
@@ -563,7 +599,9 @@ class RAGChain:
         num_predict = self.config.get('model', {}).get('num_predict', 2048)
 
         try:
-            return OllamaLLM(
+            from langchain_ollama import ChatOllama
+
+            return ChatOllama(
                 model=model_name,
                 temperature=temperature,
                 top_p=top_p,
@@ -573,12 +611,12 @@ class RAGChain:
         except TypeError:
             # Fallback si certains paramètres ne sont pas supportés
             try:
-                return OllamaLLM(model=model_name, temperature=temperature, top_p=top_p)
+                return ChatOllama(model=model_name, temperature=temperature, top_p=top_p)
             except TypeError:
                 try:
-                    return OllamaLLM(model=model_name, temperature=temperature)
+                    return ChatOllama(model=model_name, temperature=temperature)
                 except Exception:
-                    return OllamaLLM(model=model_name)
+                    return ChatOllama(model=model_name)
     
     def create_prompt(self, mode: str, system_prompt: str = "", memory: str = "", short_memory: str = "", level: str = "N/A") -> PromptTemplate:
         """Crée le prompt selon le mode avec les données déjà intégrées"""
@@ -650,166 +688,87 @@ Ta réponse :"""
         short_memory: str = "",
         level: str = "N/A",
         query: str = ""  # Nouveau : query pour re-ranking
-    ) -> RetrievalQA:
-        """Crée la chaîne QA complète avec les paramètres intégrés au prompt et re-ranking"""
+    ) -> dict:
+        """Crée une chaîne QA utilisant ChatOllama"""
+        from langchain_core.prompts import ChatPromptTemplate
+        
         llm = self.create_llm(model_name, temperature, top_p)
-        prompt = self.create_prompt(mode, system_prompt, memory, short_memory, level)
+        prompt_template = self.create_prompt(mode, system_prompt, memory, short_memory, level)
 
-        # Créer un retriever filtré pour le mode encyclopédique (exclut les novels)
-        if mode == "encyclo" and not (self.reranker and query):
-            # Si pas de re-ranking, créer un retriever filtré simple
-            original_retriever = retriever
-
-            class FilteredRetriever(BaseRetriever):
-                """Retriever qui filtre les novels en mode encyclopédique"""
-                base_retriever: Any
-                mode: str
-
-                class Config:
-                    arbitrary_types_allowed = True
-
-                def __init__(self, base_retriever, mode):
-                    super().__init__(
-                        base_retriever=base_retriever,
-                        mode=mode
-                    )
-
-                def _get_relevant_documents(
-                    self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
-                ) -> List[Document]:
-                    docs = self.base_retriever.invoke(query)
-                    if self.mode == "encyclo":
-                        before = len(docs)
-                        docs = [doc for doc in docs if doc.metadata.get('category', '') != 'novel']
-                        print(f"🔍 Filtre encyclopédique : {before} → {len(docs)} chunks (exclus: novels)")
-                    return docs
-
-            retriever = FilteredRetriever(original_retriever, mode)
-
-        # Si re-ranking activé, wrapper le retriever
-        elif self.reranker and query:
-            original_retriever = retriever
-            # Récupérer le k du slider depuis le retriever
-            k_from_slider = retriever.search_kwargs.get('k', 50)
-
-            class RerankedRetriever(BaseRetriever):
-                """Retriever avec re-ranking intégré qui hérite de BaseRetriever"""
-                base_retriever: Any
-                reranker: Any
-                config: Dict[str, Any]
-                mode: str
-                query_text: str
-                k_final: int  # Nombre final de chunks après re-ranking (depuis slider)
-
-                class Config:
-                    arbitrary_types_allowed = True
-
-                def __init__(self, base_retriever, reranker, config, mode, query_text, k_final):
-                    super().__init__(
-                        base_retriever=base_retriever,
-                        reranker=reranker,
-                        config=config,
-                        mode=mode,
-                        query_text=query_text,
-                        k_final=k_final
-                    )
-
-                def _get_relevant_documents(
-                    self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
-                ) -> List[Document]:
-                    """Méthode requise par BaseRetriever"""
-                    # Récupérer beaucoup de documents initialement
-                    k_initial = self.config['rag'].get('k_initial_retrieval', 100)
-
-                    # DEBUG : Vérifier si le filtre ChromaDB est présent
-                    current_filter = self.base_retriever.search_kwargs.get('filter', None)
-                    print(f"🔍 Filtre ChromaDB actif : {current_filter}")
-
-                    # Temporairement changer k du retriever (sans toucher au filtre)
-                    old_k = self.base_retriever.search_kwargs.get('k', 10)
-                    self.base_retriever.search_kwargs['k'] = k_initial
-
-                    # Récupération initiale (utilise invoke au lieu de get_relevant_documents)
-                    # Le filtre ChromaDB devrait être appliqué automatiquement
-                    docs = self.base_retriever.invoke(query)
-
-                    # Restaurer k original
-                    self.base_retriever.search_kwargs['k'] = old_k
-
-                    # Compter les catégories avant filtrage
-                    from collections import Counter
-                    categories_before = Counter([doc.metadata.get('category', 'unknown') for doc in docs])
-                    print(f"📥 Récupéré {len(docs)} chunks - Catégories: {dict(categories_before)}")
-
-                    # ⚡ Filtrage supplémentaire en mode encyclopédique (au cas où le filtre ChromaDB n'a pas fonctionné)
-                    if self.mode == "encyclo":
-                        before_filter = len(docs)
-                        docs = [doc for doc in docs if doc.metadata.get('category', '') != 'novel']
-                        after_filter = len(docs)
-                        if before_filter != after_filter:
-                            print(f"⚠️ ChromaDB n'a PAS filtré ! Post-filtrage : {before_filter} → {after_filter} chunks (novels enlevés)")
-                        else:
-                            print(f"✅ ChromaDB a correctement filtré (aucun novel trouvé)")
-
-                    # Re-ranking avec k_final depuis le slider de l'interface
-                    print(f"🎯 Utilisation du slider : k_final = {self.k_final}")
-                    reranked = self.reranker(query, docs, self.k_final)
-                    return reranked
-
-            retriever = RerankedRetriever(original_retriever, self.rerank_documents, self.config, mode, query, k_from_slider)
-
-        return RetrievalQA.from_chain_type(
-            llm=llm,
-            retriever=retriever,
-            chain_type="stuff",
-            chain_type_kwargs={"prompt": prompt},
-            return_source_documents=return_sources
+        # Créer une chaîne RAG classique avec LCEL
+        from langchain_core.runnables import RunnablePassthrough
+        from operator import itemgetter
+        
+        # Créer la fonction de formatage du context
+        def format_context(docs):
+            context_text = "\n\n".join([doc.page_content for doc in docs])
+            return context_text
+        
+        # Construire la chaîne
+        chain = (
+            {"context": itemgetter("context") | RunnablePassthrough(), "question": itemgetter("question")}
+            | prompt_template
+            | llm
         )
+        
+        return {
+            "chain": chain,
+            "retriever": retriever,
+            "llm": llm,
+            "prompt": prompt_template,
+            "format_context": format_context
+        }
     
     def query(
         self,
-        qa_chain: RetrievalQA,
+        qa_chain: dict,
         question: str,
         mode: str,
-        system_prompt: str,
+        system_prompt: str = "",
         memory: str = "",
-        level: str = "N/A",
-        short_memory: str = ""
-    ) -> Dict[str, Any]:
-        """Exécute une requête sur la chaîne QA"""
-        inputs = {
-            "query": question,
-            "question": question,
-            "system_prompt": system_prompt
-        }
-        
-        if mode == "mj":
-            inputs["memory"] = memory
-            inputs["level"] = level
-        else:
-            inputs["short_memory"] = short_memory
-        
-        result = qa_chain(inputs)
-        
-        # Normaliser le résultat
-        if isinstance(result, dict):
-            response_text = result.get("result") or result.get("output_text") or ""
-            source_docs = result.get("source_documents", [])
-        else:
-            response_text = str(result)
-            source_docs = []
-        
-        return {
-            "response": response_text,
-            "sources": source_docs,
-            "confidence": self._calculate_confidence(source_docs)
-        }
+        short_memory: str = "",
+        level: str = "N/A"
+    ) -> dict:
+        """Exécute la recherche et génère une réponse"""
+        try:
+            # Récupérer les composants de la chaîne
+            chain = qa_chain.get("chain")
+            retriever = qa_chain.get("retriever")
+            llm = qa_chain.get("llm")
+            prompt = qa_chain.get("prompt")
+            format_context = qa_chain.get("format_context")
+            
+            if not chain or not retriever:
+                raise ValueError("Chaîne QA invalide")
+            
+            # Récupérer les documents
+            docs = retriever.invoke(question)
+            
+            # Utiliser la fonction de formatage du context
+            context_text = format_context(docs)
+            
+            # Formater les variables pour le prompt
+            input_data = {
+                "question": question,
+                "context": context_text,
+                "mode": mode,
+                "level": level,
+                "memory": memory,
+                "system_prompt": system_prompt
+            }
+            
+            # Exécuter la chaîne
+            response = chain.invoke(input_data)
+            
+            return {
+                "response": response,
+                "sources": docs,
+                "success": True
+            }
+            
+        except Exception as e:
+            raise e
     
-    def _calculate_confidence(self, source_docs: List) -> float:
-        """Calcule un score de confiance basé sur les sources"""
-        if not source_docs:
-            return 0.0
-        
-        # Score simple basé sur le nombre de sources
-        # Plus sophistiqué: utiliser les scores de similarité si disponibles
-        return min(1.0, len(source_docs) / self.config['rag']['k_retrieval'])
+    def get_base_llm(self, model_name: str = None):
+        """Retourne une instance de base LLM (wrapper pour backward compatibility)"""
+        return None

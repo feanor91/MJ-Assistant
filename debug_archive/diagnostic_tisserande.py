@@ -4,8 +4,8 @@ Script de diagnostic pour comprendre pourquoi "La Tisserande Oubliée" n'est pas
 
 import yaml
 from pathlib import Path
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 
 # Charger config
 with open("config.yaml", encoding="utf-8") as f:

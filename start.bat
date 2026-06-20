@@ -114,7 +114,7 @@ echo L'application va s'ouvrir dans votre navigateur...
 echo Appuie sur Ctrl+C pour arreter l'application
 echo.
 
-streamlit run app.py
+streamlit run app_init.py
 
 REM Si Streamlit se ferme, attendre
 if errorlevel 1 (

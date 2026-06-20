@@ -7,7 +7,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.utils import load_config
-from langchain_community.llms import Ollama
+try:
+    from langchain_ollama import OllamaLLM
+except ImportError:
+    from langchain_community.llms import Ollama
+    OllamaLLM = Ollama
 import time
 
 def test_gpt_oss():
