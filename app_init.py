@@ -503,10 +503,32 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
 
         context_text = format_context(source_docs)
 
+        # En mode encyclopédique : injecter le premier hit direct dans la question
+        # Les LLMs suivent mieux le contenu de la question que les instructions de contexte
+        _query_to_use = query
+        if mode == "Encyclopédique":
+            import re as _re_aug
+            _qw_aug = set(w.lower() for w in _re_aug.findall(r'\w{4,}', query))
+            for _aug_i, _aug_doc in enumerate(source_docs, 1):
+                _aug_cw = set(w.lower() for w in _re_aug.findall(r'\w{4,}', _aug_doc.page_content))
+                _aug_tl = next((ln for ln in _aug_doc.page_content.split('\n') if ln.strip().startswith('#')), '')
+                _aug_ht = bool(_aug_tl) and any(w in _aug_tl.lower() for w in _qw_aug)
+                _aug_ov = len(_qw_aug & _aug_cw)
+                if _aug_ht or _aug_ov >= max(2, len(_qw_aug) * 0.4):
+                    _aug_pg = _aug_doc.metadata.get('page', '?')
+                    _query_to_use = (
+                        f"{query}\n\n"
+                        f"[Réf. {_aug_i} — DÉFINITION EXACTE dans les documents (p.{_aug_pg})"
+                        f" — utilise ce texte pour répondre]:\n"
+                        f"{_aug_doc.page_content}"
+                    )
+                    print(f"🎯 Query augmentée avec Réf. {_aug_i}, p.{_aug_pg}")
+                    break
+
         import time as _time
         import re as _re
         _t0 = _time.time()
-        result = qa_chain["chain"].invoke({"context": context_text, "question": query})
+        result = qa_chain["chain"].invoke({"context": context_text, "question": _query_to_use})
         _elapsed = _time.time() - _t0
 
         _meta = getattr(result, 'response_metadata', {}) or {}
