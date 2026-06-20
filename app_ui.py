@@ -345,7 +345,6 @@ def _apply_mode_presets(mode: str, available_models: list):
     )
     if chosen:
         st.session_state.current_model = chosen
-        st.session_state.model_selector = chosen
         # Précharger immédiatement si le modèle change via preset
         if chosen != st.session_state.get("_last_preloaded_model"):
             _preload_model_bg(chosen)

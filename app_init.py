@@ -968,14 +968,12 @@ def main():
                         key=f"hist_btn_{_i}",
                         use_container_width=True
                     ):
-                        st.session_state["_pending_query"] = _past_q
+                        st.session_state["_prefill_query"] = _past_q
                         st.rerun()
 
-        # Récupérer une requête historique en attente (bypass du form)
-        _pending_query = None
-        if "_pending_query" in st.session_state:
-            _pending_query = st.session_state["_pending_query"]
-            del st.session_state["_pending_query"]
+        # Pré-remplir le champ si une question historique a été sélectionnée
+        if "_prefill_query" in st.session_state:
+            st.session_state["user_input"] = st.session_state.pop("_prefill_query")
 
         # Formulaire pour les nouvelles requêtes
         with st.form(key="query_form", clear_on_submit=True):
@@ -991,8 +989,7 @@ def main():
 
             submit = st.form_submit_button("📤 Envoyer", type="primary", use_container_width=True)
 
-        # Déterminer la requête à traiter (historique prioritaire, sinon form)
-        active_query = _pending_query or (user_query.strip() if submit and user_query else None)
+        active_query = user_query.strip() if submit and user_query else None
 
         if active_query:
             # Sauvegarder dans l'historique (10 entrées max, sans doublons consécutifs)
