@@ -116,6 +116,7 @@ def init_session_state(config):
         st.session_state.current_model = config['model']['default']
         st.session_state.temperature = config['model']['temperature']
         st.session_state.top_p = config['model']['top_p']
+        st.session_state.num_ctx = config['model'].get('num_ctx', 32768)
         st.session_state.k_retrieval = config['rag']['k_retrieval']
         st.session_state.show_sources = config['ui']['show_sources_default']
         st.session_state.show_debug_chunks = config['rag'].get('debug_show_context', False)
@@ -296,6 +297,22 @@ def _load_bm25_docs(_db_dir):
         return None
 
 
+@st.cache_resource(show_spinner=False)
+def _get_bm25_retriever(_db_dir):
+    """Construit et cache le BM25Retriever (construction une seule fois au démarrage)."""
+    docs = _load_bm25_docs(_db_dir)
+    if not docs:
+        return None
+    try:
+        from langchain_community.retrievers.bm25 import BM25Retriever
+        retriever = BM25Retriever.from_documents(docs)
+        print(f"✅ BM25Retriever construit et mis en cache ({len(docs)} docs)")
+        return retriever
+    except Exception as e:
+        print(f"⚠️ BM25 non disponible : {e}")
+        return None
+
+
 def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, system_prompt, memory, short_memory, level, source_filter="rules_and_universe", query=""):
     """Crée la chaîne QA (doit être recréée à chaque requête car contient la mémoire)"""
     from core.rag import RAGChain, BM25_AVAILABLE
@@ -318,15 +335,14 @@ def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, sy
         vector_retriever = vectordb.as_retriever(search_kwargs={"k": k})
 
     # Hybrid search : combiner BM25 (mots-clés) + vectoriel (sémantique)
+    # Le BM25Retriever est mis en cache — pas reconstruit à chaque requête
     retriever = vector_retriever
     if BM25_AVAILABLE:
-        bm25_docs = _load_bm25_docs(config['paths']['db_dir'])
-        if bm25_docs:
+        bm25_retriever = _get_bm25_retriever(config['paths']['db_dir'])
+        if bm25_retriever:
             try:
-                from langchain_community.retrievers.bm25 import BM25Retriever
                 from core.rag import SimpleEnsembleRetriever
-                bm25_retriever = BM25Retriever.from_documents(bm25_docs)
-                bm25_retriever.k = k
+                bm25_retriever.k = k  # Ajuster k sans reconstruire l'index
                 retriever = SimpleEnsembleRetriever(
                     retrievers=[bm25_retriever, vector_retriever],
                     weights=[0.4, 0.6]
@@ -385,22 +401,28 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         # Récupérer le filtre de source pour le mode encyclopédique
         source_filter = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
 
-        # Créer la qa_chain avec tous les paramètres intégrés (y compris query pour re-ranking)
-        qa_chain, _ = get_qa_chain(
+        # Encyclopédique : two-phase retrieval (large fetch → re-rank CrossEncoder → k_final au LLM)
+        # MJ immersif : retrieval direct avec k_value
+        if mode == "Encyclopédique":
+            k_fetch = config['rag'].get('k_initial_retrieval', 40)
+        else:
+            k_fetch = k_value
+
+        qa_chain, rag_chain = get_qa_chain(
             config=config,
             vectordb=vectordb,
             model=st.session_state.current_model,
             mode=mode,
             temp=temp_value,
             top_p=st.session_state.top_p,
-            k=k_value,
+            k=k_fetch,
             show_sources=st.session_state.show_sources,
             system_prompt=system_prompt,
             memory=memory_text,
             short_memory=short_memory_text,
             level=level,
             source_filter=source_filter,
-            query=query  # 🆕 Passer la query pour le re-ranking
+            query=query
         )
 
         # Récupérer les documents avec scores de pertinence réels
@@ -417,17 +439,33 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         except Exception:
             pass
 
-        # Récupérer les chunks via le retriever (BM25 + vectoriel si dispo)
+        # Récupérer les chunks (k_fetch docs)
         source_docs = retriever.invoke(query)
+
+        # Phase 2 : re-ranker → réduire à k_value pour le LLM
+        if mode == "Encyclopédique" and len(source_docs) > k_value:
+            if rag_chain and rag_chain.reranker:
+                source_docs = rag_chain.rerank_documents(query, source_docs, k_value)
+                print(f"🎯 Two-phase : {k_fetch} → {len(source_docs)} chunks après re-ranking")
+            else:
+                source_docs = source_docs[:k_value]
+                print(f"📋 Two-phase : {k_fetch} → {len(source_docs)} chunks (tronqué, pas de re-ranker)")
 
         # Avertissement console si pertinence faible
         if confidence < 0.3:
             print(f"⚠️ Pertinence faible ({confidence:.0%}) — contexte probablement hors-sujet")
 
         context_text = format_context(source_docs)
-        result = qa_chain["chain"].invoke({"context": context_text, "question": query})
 
+        import time as _time
         import re as _re
+        _t0 = _time.time()
+        result = qa_chain["chain"].invoke({"context": context_text, "question": query})
+        _elapsed = _time.time() - _t0
+
+        _meta = getattr(result, 'response_metadata', {}) or {}
+        _tokens_in = _meta.get('prompt_eval_count', 0)
+        _tokens_out = _meta.get('eval_count', 0)
 
         # 1. Récupérer le contenu brut
         if hasattr(result, 'content'):
@@ -467,23 +505,27 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         result_obj = {
             "response": response_text,
             "sources": source_docs,
-            "confidence": confidence
+            "confidence": confidence,
+            "elapsed": _elapsed,
+            "tokens_in": _tokens_in,
+            "tokens_out": _tokens_out,
         }
 
         # Enregistrer dans la mémoire
         memory.add(query, result_obj['response'])
 
-        # Parser la réponse (mode MJ uniquement)
+        # Parser la réponse + alimenter la timeline
+        from datetime import datetime
         if mode == "MJ immersif":
             from core.parser import ResponseParser
             parsed = ResponseParser.parse(result_obj['response'])
             st.session_state.game_state.update_from_parsed(parsed)
-            from datetime import datetime
-            st.session_state.timeline.append({
-                "query": query,
-                "response": result_obj['response'],
-                "timestamp": datetime.now().isoformat()
-            })
+        st.session_state.timeline.append({
+            "query": query,
+            "response": result_obj['response'],
+            "timestamp": datetime.now().isoformat(),
+            "mode": mode,
+        })
 
         # Statistiques
         if hasattr(st.session_state, 'statistics'):
@@ -520,41 +562,90 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         raise e
 
 
+# Instructions de longueur/format selon le niveau choisi
+_LEVEL_INSTRUCTIONS = {
+    # Mode MJ immersif
+    "Résumé court": (
+        "LONGUEUR : 2 à 3 paragraphes courts et percutants. Va à l'essentiel."
+    ),
+    "Scène détaillée": (
+        "LONGUEUR : 4 à 6 paragraphes. Inclus des détails sensoriels "
+        "(sons, odeurs, lumières, textures) pour ancrer la scène."
+    ),
+    "Longue narration immersive": (
+        "LONGUEUR : 8 à 12 paragraphes minimum. Développe chaque élément en profondeur : "
+        "décors fouillés, atmosphère, dialogues, tensions dramatiques, arrière-pensées des "
+        "personnages. Prends le temps de planter le décor, d'installer la tension, et de "
+        "donner vie à chaque détail. Ne résume pas — décris, montre, fais ressentir."
+    ),
+    # Mode encyclopédique
+    "Points clés": (
+        "FORMAT : Réponds en 3 à 5 points clés maximum, format bullet points (•). "
+        "Sois direct et factuel. Pas de phrases introductives."
+    ),
+    "Explication complète": (
+        "FORMAT : Explique la règle ou le concept en détail avec les mécaniques précises, "
+        "au moins un exemple de jeu concret, et les exceptions notables."
+    ),
+    "Détail exhaustif": (
+        "FORMAT : Réponse exhaustive avec titres markdown (## et ###) : définition, "
+        "mécaniques détaillées, cas particuliers, interactions avec d'autres règles, "
+        "plusieurs exemples de jeu. Couvre tous les aspects du sujet."
+    ),
+}
+
+
 def process_creative_query(query: str, config, level: str):
     """Mode narratif pur : appel direct au LLM sans RAG.
     Utilise uniquement le system_prompt du jeu comme contexte — pas de chunks de documents.
     """
+    import re as _re
+
     try:
         system_prompt = config['prompts']['mj_system']
         model = st.session_state.current_model
         temp = st.session_state.temperature
         top_p = st.session_state.top_p
 
+        level_instruction = _LEVEL_INSTRUCTIONS.get(level, _LEVEL_INSTRUCTIONS["Scène détaillée"])
+
         # Contexte de la mémoire courante
         memory_text = st.session_state.mj_memory.format_for_prompt(
             n=config['memory']['short_memory_context']
         )
 
-        from core.rag import RAGChain
+        from langchain_ollama import ChatOllama
         from langchain_core.prompts import PromptTemplate
-        from langchain_core.output_parsers import StrOutputParser
 
-        rag_chain = RAGChain(config)
-        llm = rag_chain.create_llm(model, temp, top_p)
+        # Créer le LLM directement — sans RAGChain pour éviter
+        # le chargement du re-ranker et toute opération RAG
+        num_ctx = st.session_state.get('num_ctx', config.get('model', {}).get('num_ctx', 32768))
+        num_predict = config.get('model', {}).get('num_predict', 2048)
+        _thinking = ('qwen3', 'gemma4', 'gemma3', 'deepseek-r1', 'qwq')
+        _extra = {'think': False} if any(f in model.lower() for f in _thinking) else {}
+        try:
+            llm = ChatOllama(model=model, temperature=temp, top_p=top_p,
+                             num_ctx=num_ctx, num_predict=num_predict, **_extra)
+        except TypeError:
+            try:
+                llm = ChatOllama(model=model, temperature=temp, top_p=top_p,
+                                 num_ctx=num_ctx, num_predict=num_predict)
+            except TypeError:
+                llm = ChatOllama(model=model, temperature=temp)
 
         template = f"""{system_prompt}
 
 Mémoire de la partie :
 {memory_text}
 
-Niveau de narration : {level}
+{level_instruction}
 
 Demande du joueur : {{question}}
 
 Réponds librement en te basant sur ta connaissance de "Les Lames du Cardinal" et de la France du XVIIème siècle sous Louis XIII. Sois immersif, précis et cohérent avec l'univers. Ne mentionne jamais de "documents" ni de "contexte".
 
 Réponds en suivant ce format :
-1. Description immersive (adapte la longueur au niveau choisi)
+1. Description immersive (respecte impérativement les consignes de longueur ci-dessus)
 2. Propose 2 à 4 options claires (format: OPTION 1: ..., OPTION 2: ..., etc.)
 3. Si nécessaire, liste les conséquences structurées:
    - [PNJ:Nom:Statut]
@@ -564,14 +655,40 @@ Réponds en suivant ce format :
 Ta réponse :"""
 
         prompt = PromptTemplate(template=template, input_variables=["question"])
-        chain = prompt | llm | StrOutputParser()
-        response_text = chain.invoke({"question": query})
+        # Ne pas utiliser StrOutputParser — extraire manuellement pour gérer
+        # les modèles thinking (gemma4, qwen3) qui retournent .content vide
+        chain = prompt | llm
+
+        import time as _time
+        _t0 = _time.time()
+        result = chain.invoke({"question": query})
+        _elapsed = _time.time() - _t0
+
+        _meta = getattr(result, 'response_metadata', {}) or {}
+        _tokens_in = _meta.get('prompt_eval_count', 0)
+        _tokens_out = _meta.get('eval_count', 0)
+
+        # Extraction robuste (même logique que process_query)
+        if hasattr(result, 'content'):
+            response_text = result.content or ""
+        else:
+            response_text = str(result)
+
+        if not response_text.strip() and hasattr(result, 'additional_kwargs'):
+            ak = result.additional_kwargs
+            response_text = (
+                ak.get('thinking') or ak.get('reasoning_content') or ak.get('think') or ""
+            ).strip()
 
         # Strip balises thinking
-        import re as _re
         if '<think>' in response_text:
             after = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
             response_text = after if after else response_text
+
+        if not response_text.strip():
+            print(f"⚠️ Réponse vide (créatif) ! type={type(result).__name__} | "
+                  f"content={repr(getattr(result,'content','?'))[:200]} | "
+                  f"ak_keys={list(getattr(result,'additional_kwargs',{}).keys())}")
 
         print(f"✨ Mode narratif pur : {len(response_text)} chars générés")
 
@@ -587,10 +704,18 @@ Ta réponse :"""
         st.session_state.timeline.append({
             "query": query,
             "response": response_text,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "mode": "Narratif pur",
         })
 
-        return {"response": response_text, "sources": [], "confidence": None}
+        return {
+            "response": response_text,
+            "sources": [],
+            "confidence": None,
+            "elapsed": _elapsed,
+            "tokens_in": _tokens_in,
+            "tokens_out": _tokens_out,
+        }
 
     except Exception as e:
         raise e
@@ -613,13 +738,31 @@ def main():
     from app_ui import render_sidebar
     render_sidebar()
 
+    # ── Presets de mode : détection AVANT le rendu des colonnes ──────────────
+    # Le sélecteur de mode est dans col_config, mais le toggle creative_mode est
+    # dans col_main (rendu en premier). On doit appliquer les presets ici pour
+    # pouvoir modifier creative_mode avant que son widget soit instancié.
+    from app_ui import _apply_mode_presets, _EXCLUDED
+    from core.utils import get_ollama_models
+    _avail_models = [m for m in get_ollama_models() if m not in _EXCLUDED]
+    _incoming_mode = st.session_state.get("mode_selector",
+                                          st.session_state.get("mode", "MJ immersif"))
+    # Synchroniser st.session_state.mode immédiatement — le selectbox de mode
+    # est dans col_config (rendu APRÈS col_main), donc sans cette ligne,
+    # col_main lirait l'ancienne valeur du mode.
+    st.session_state.mode = _incoming_mode
+    if _incoming_mode != st.session_state.get("_last_applied_mode"):
+        _apply_mode_presets(_incoming_mode, _avail_models)
+        st.session_state._last_applied_mode = _incoming_mode
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Layout principal - colonne large pour le contenu principal, colonne droite pour la config
     col_main, col_config = st.columns([4, 1])
 
     # Colonne principale
     with col_main:
-        # Timeline (mode MJ uniquement)
-        if st.session_state.mode == "MJ immersif" and config['ui'].get('timeline_enabled', True):
+        # Timeline (tous les modes)
+        if config['ui'].get('timeline_enabled', True):
             from app_ui import render_timeline
             render_timeline()
 
@@ -726,28 +869,34 @@ def main():
         # Zone d'interaction
         st.markdown("### 💬 Interaction")
 
-        # Niveau de narration + toggle narratif pur (mode MJ)
+        # Niveau de narration (les deux modes) + toggle narratif pur (MJ uniquement)
         if st.session_state.mode == "MJ immersif":
             col_lvl, col_narr = st.columns([3, 2])
             with col_lvl:
                 level = st.selectbox(
                     "Niveau de narration:",
                     ["Résumé court", "Scène détaillée", "Longue narration immersive"],
-                    key="narration_level"
+                    key="narration_level",
+                    help="Contrôle la longueur et la richesse de la réponse du MJ"
                 )
             with col_narr:
                 st.markdown("<br>", unsafe_allow_html=True)
                 creative_mode = st.toggle(
                     "✨ Narratif pur (sans RAG)",
-                    value=False,
                     key="creative_mode",
-                    help="Descriptions, PNJ, scènes : le modèle crée librement sans chercher dans les documents"
+                    help="Pour descriptions, PNJ, scènes : le modèle crée librement sans chercher dans les documents"
                 )
         else:
-            level = "N/A"
+            # Mode encyclopédique : niveau contrôle la densité de la réponse factuelle
+            level = st.selectbox(
+                "Niveau de détail:",
+                ["Points clés", "Explication complète", "Détail exhaustif"],
+                key="narration_level",
+                help="Points clés = bullet points concis | Explication complète = règles + exemples | Détail exhaustif = tout, y compris cas particuliers"
+            )
             creative_mode = False
 
-        # Historique des requêtes — boutons cliquables pour rappeler une requête précédente
+        # Historique des requêtes — clic = renvoi immédiat (sans passer par le form)
         if st.session_state.query_history:
             with st.expander(f"🕐 Historique ({len(st.session_state.query_history)} requêtes)", expanded=False):
                 for _i, _past_q in enumerate(st.session_state.query_history):
@@ -756,11 +905,16 @@ def main():
                         key=f"hist_btn_{_i}",
                         use_container_width=True
                     ):
-                        # Pré-charger dans le session_state du widget AVANT rerun
-                        st.session_state["user_input"] = _past_q
+                        st.session_state["_pending_query"] = _past_q
                         st.rerun()
 
-        # Utiliser un formulaire pour gérer l'envoi avec Entrée
+        # Récupérer une requête historique en attente (bypass du form)
+        _pending_query = None
+        if "_pending_query" in st.session_state:
+            _pending_query = st.session_state["_pending_query"]
+            del st.session_state["_pending_query"]
+
+        # Formulaire pour les nouvelles requêtes
         with st.form(key="query_form", clear_on_submit=True):
             user_query = st.text_input(
                 "Ta question ou action (Entrée pour envoyer):",
@@ -772,28 +926,29 @@ def main():
             if user_query and any(word in user_query.lower() for word in ["liste", "tous", "toutes", "22", "vingt"]):
                 st.warning("⚠️ **Attention** : Les questions demandant des listes complètes peuvent générer des hallucinations. Le RAG fonctionne mieux avec des questions ciblées (ex: 'Explique l'arcane X').")
 
-            # Bouton d'envoi
             submit = st.form_submit_button("📤 Envoyer", type="primary", use_container_width=True)
 
-        # Traitement de la requête
-        if submit and user_query and user_query.strip():
+        # Déterminer la requête à traiter (historique prioritaire, sinon form)
+        active_query = _pending_query or (user_query.strip() if submit and user_query else None)
+
+        if active_query:
             # Sauvegarder dans l'historique (10 entrées max, sans doublons consécutifs)
             history = st.session_state.query_history
-            if not history or history[0] != user_query:
-                history.insert(0, user_query)
+            if not history or history[0] != active_query:
+                history.insert(0, active_query)
                 st.session_state.query_history = history[:10]
 
             with st.spinner("✨ Le MJ crée..." if creative_mode else "🤔 Le MJ réfléchit..."):
                 try:
                     if creative_mode and st.session_state.mode == "MJ immersif":
                         result = process_creative_query(
-                            query=user_query,
+                            query=active_query,
                             config=config,
                             level=level
                         )
                     else:
                         result = process_query(
-                            query=user_query,
+                            query=active_query,
                             config=config,
                             mode=st.session_state.mode,
                             level=level,
@@ -805,7 +960,7 @@ def main():
 
                     # Afficher la question posée
                     st.markdown("### 💬 Question")
-                    st.info(f"**{user_query}**")
+                    st.info(f"**{active_query}**")
 
                     # Affichage de la réponse
                     st.markdown("### ✅ Réponse")
@@ -879,11 +1034,23 @@ def main():
                                     st.markdown("---")
 
                     # Confiance RAG (uniquement si on a utilisé le RAG)
+                    _caption_parts = []
                     if result.get('confidence') is not None and result['confidence'] > 0:
                         confidence_color = "🟢" if result['confidence'] > 0.7 else "🟡" if result['confidence'] > 0.4 else "🔴"
-                        st.caption(f"{confidence_color} Confiance RAG: {result['confidence']:.0%}")
+                        _caption_parts.append(f"{confidence_color} Confiance RAG: {result['confidence']:.0%}")
                     elif creative_mode:
-                        st.caption("✨ Mode narratif pur — génération libre sans RAG")
+                        _caption_parts.append("✨ Narratif pur")
+
+                    # Métriques de performance
+                    if result.get('elapsed'):
+                        _caption_parts.append(f"⏱️ {result['elapsed']:.1f}s")
+                    if result.get('tokens_in'):
+                        _caption_parts.append(f"📥 {result['tokens_in']} tk")
+                    if result.get('tokens_out'):
+                        _caption_parts.append(f"📤 {result['tokens_out']} tk")
+
+                    if _caption_parts:
+                        st.caption(" · ".join(_caption_parts))
 
                     # Mode debug : afficher le contexte complet envoyé au modèle
                     if st.session_state.get('show_debug_chunks', False):

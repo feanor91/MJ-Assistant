@@ -220,18 +220,40 @@ def render_sidebar():
 
 
 def render_timeline():
-    """Affiche la timeline de la partie"""
+    """Affiche la timeline de la partie (tous modes, color-codée)"""
     if not st.session_state.timeline:
         return
 
+    # Couleurs et icônes par mode
+    _MODE_STYLE = {
+        "MJ immersif":   {"icon": "🗡️", "color": "#4a90d9", "label": "MJ immersif"},
+        "Narratif pur":  {"icon": "✨", "color": "#9b59b6", "label": "Narratif pur"},
+        "Encyclopédique":{"icon": "📚", "color": "#27ae60", "label": "Encyclopédique"},
+    }
+    _DEFAULT_STYLE = {"icon": "💬", "color": "#888888", "label": "?"}
+
     st.markdown("### 🕰️ Timeline de la partie")
     with st.expander("Voir la timeline"):
+        total = len(st.session_state.timeline)
         for i, entry in enumerate(reversed(st.session_state.timeline)):
-            with st.expander(f"Échange {len(st.session_state.timeline) - i + 1}", expanded=(i == 1)):
-                st.markdown(f"**Joueur:** {entry['query']}")
-                with st.container():
-                    st.markdown(entry['response'])
-                st.caption(f"_Horodatage: {entry['timestamp']}_")
+            entry_mode = entry.get('mode', 'MJ immersif')
+            style = _MODE_STYLE.get(entry_mode, _DEFAULT_STYLE)
+            idx = total - i
+
+            color = style['color']
+            icon  = style['icon']
+            label = style['label']
+            ts    = entry['timestamp'][:16]
+
+            with st.expander(f"{icon} #{idx} {label}", expanded=(i == 0)):
+                st.markdown(
+                    f"<div style='border-left:3px solid {color};"
+                    f"padding-left:10px;margin-bottom:8px;'>"
+                    f"<b>Joueur :</b> {entry['query']}</div>",
+                    unsafe_allow_html=True
+                )
+                st.markdown(entry['response'])
+                st.caption(f"_{entry['timestamp']}_")
 
 
 _EXCLUDED = {
@@ -269,18 +291,45 @@ _MODE_PRESETS = {
     },
     "Encyclopédique": {
         "model_priority": [
+            "mistral-nemo:latest",
             "qwen2.5:14b",
             "phi4:latest",
-            "mistral-nemo:latest",
             "phi3:14b",
         ],
         "temperature": 0.0,
         "top_p": 0.9,
-        "k_retrieval_encyclo": 30,
+        "k_retrieval_encyclo": 15,
         "source_filter": "rules_and_universe",
         "show_sources": True,
     },
 }
+
+
+def _preload_model_bg(model_name: str):
+    """Charge le modèle en mémoire GPU via l'API Ollama (thread background)."""
+    import threading
+    import urllib.request
+    import json as _json
+
+    def _load():
+        try:
+            payload = _json.dumps({
+                "model": model_name,
+                "keep_alive": -1   # Garder en mémoire indéfiniment
+            }).encode()
+            req = urllib.request.Request(
+                "http://localhost:11434/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                resp.read()
+            print(f"✅ Modèle {model_name} chargé en mémoire GPU")
+        except Exception as e:
+            print(f"⚠️ Préchargement {model_name} impossible : {e}")
+
+    threading.Thread(target=_load, daemon=True).start()
 
 
 def _apply_mode_presets(mode: str, available_models: list):
@@ -297,6 +346,10 @@ def _apply_mode_presets(mode: str, available_models: list):
     if chosen:
         st.session_state.current_model = chosen
         st.session_state.model_selector = chosen
+        # Précharger immédiatement si le modèle change via preset
+        if chosen != st.session_state.get("_last_preloaded_model"):
+            _preload_model_bg(chosen)
+            st.session_state._last_preloaded_model = chosen
 
     # Température
     st.session_state.temperature = preset["temperature"]
@@ -310,6 +363,9 @@ def _apply_mode_presets(mode: str, available_models: list):
     if "show_sources" in preset:
         st.session_state.show_sources = preset["show_sources"]
         st.session_state.show_sources_checkbox = preset["show_sources"]
+
+    # Réinitialiser le toggle narratif pur (appelé avant le rendu du toggle)
+    st.session_state.creative_mode = False
 
     # Réglages spécifiques au mode
     if mode == "MJ immersif":
@@ -329,16 +385,6 @@ def render_config_panel(config):
     raw_models = get_ollama_models()
     filtered_models = [m for m in raw_models if m not in _EXCLUDED]
 
-    # ── Détection changement de mode et application des presets ──────────────
-    # On lit le sélecteur AVANT qu'il soit rendu (Streamlit met déjà la valeur
-    # dans session_state dès le début du rerun suivant l'interaction utilisateur)
-    incoming_mode = st.session_state.get("mode_selector",
-                                         st.session_state.get("mode", "MJ immersif"))
-    if incoming_mode != st.session_state.get("_last_applied_mode"):
-        _apply_mode_presets(incoming_mode, filtered_models)
-        st.session_state._last_applied_mode = incoming_mode
-    # ─────────────────────────────────────────────────────────────────────────
-
     def _label(m):
         tag = _LABELS.get(m)
         return f"{m}  ({tag})" if tag else m
@@ -355,6 +401,12 @@ def render_config_panel(config):
         help="Modèles Ollama disponibles localement"
     )
     st.session_state.current_model = selected_model
+
+    # Précharger le modèle en mémoire GPU dès la sélection
+    if selected_model != st.session_state.get("_last_preloaded_model"):
+        _preload_model_bg(selected_model)
+        st.session_state._last_preloaded_model = selected_model
+        st.toast(f"⏳ Chargement de **{selected_model}** en mémoire...", icon="🔄")
 
     st.markdown("---")
 
@@ -397,6 +449,20 @@ def render_config_panel(config):
         )
         st.session_state.top_p = top_p
         st.caption(f"Actuel: {top_p}")
+
+    # Taille du contexte (num_ctx)
+    _ctx_default = config.get('model', {}).get('num_ctx', 32768)
+    _ctx_options = [16384, 32768, 49152, 65536]
+    _ctx_labels  = {16384: "16K", 32768: "32K", 49152: "48K", 65536: "64K"}
+    ctx_val = st.select_slider(
+        "Contexte (num_ctx)",
+        options=_ctx_options,
+        value=st.session_state.get('num_ctx', _ctx_default),
+        format_func=lambda x: _ctx_labels[x],
+        key="num_ctx_slider",
+        help="Taille de la fenêtre de contexte du modèle. 32K = bon équilibre. 64K = plus lent, plus de VRAM."
+    )
+    st.session_state.num_ctx = ctx_val
 
     st.markdown("---")
 
@@ -488,6 +554,28 @@ def render_config_panel(config):
             if hasattr(st.session_state, 'statistics'):
                 st.session_state.statistics = SessionManager(paths['save_dir'])
             st.rerun()
+
+    st.markdown("---")
+
+    # Déchargement du modèle GPU
+    current_model = st.session_state.get('current_model', '')
+    if st.button("🔌 Décharger le modèle", use_container_width=True,
+                 help="Libère la VRAM en déchargeant le modèle actuel d'Ollama"):
+        try:
+            import urllib.request, json as _j
+            payload = _j.dumps({"model": current_model, "keep_alive": 0}).encode()
+            req = urllib.request.Request(
+                "http://localhost:11434/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read()
+            st.success(f"✅ `{current_model}` déchargé — VRAM libérée")
+            st.session_state._last_preloaded_model = None
+        except Exception as e:
+            st.error(f"❌ Impossible de décharger : {e}")
 
 
 def render_memory_display(mode: str):

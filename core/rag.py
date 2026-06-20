@@ -685,8 +685,13 @@ class RAGChain:
     
     def create_llm(self, model_name: str, temperature: float, top_p: float):
         """Crée une instance LLM"""
-        # Récupérer les paramètres du config
-        num_ctx = self.config.get('model', {}).get('num_ctx', 8192)
+        # num_ctx : priorité au slider UI, sinon config, sinon défaut 32K
+        try:
+            import streamlit as _st
+            num_ctx = _st.session_state.get('num_ctx',
+                      self.config.get('model', {}).get('num_ctx', 32768))
+        except Exception:
+            num_ctx = self.config.get('model', {}).get('num_ctx', 32768)
         num_predict = self.config.get('model', {}).get('num_predict', 2048)
 
         try:
@@ -730,6 +735,23 @@ class RAGChain:
     
     def create_prompt(self, mode: str, system_prompt: str = "", memory: str = "", short_memory: str = "", level: str = "N/A") -> PromptTemplate:
         """Crée le prompt selon le mode avec les données déjà intégrées"""
+        _level_instructions = {
+            "Résumé court": (
+                "LONGUEUR : 2 à 3 paragraphes courts et percutants. Va à l'essentiel."
+            ),
+            "Scène détaillée": (
+                "LONGUEUR : 4 à 6 paragraphes. Inclus des détails sensoriels "
+                "(sons, odeurs, lumières, textures) pour ancrer la scène."
+            ),
+            "Longue narration immersive": (
+                "LONGUEUR : 8 à 12 paragraphes minimum. Développe chaque élément en profondeur : "
+                "décors fouillés, atmosphère, dialogues, tensions dramatiques, arrière-pensées des "
+                "personnages. Prends le temps de planter le décor, d'installer la tension, et de "
+                "donner vie à chaque détail. Ne résume pas — décris, montre, fais ressentir."
+            ),
+        }
+        level_instruction = _level_instructions.get(level, _level_instructions["Scène détaillée"])
+
         if mode == "mj":
             template = f"""
 {system_prompt}
@@ -740,7 +762,7 @@ Mémoire de la partie :
 Contexte extrait des documents (utilise ces informations en priorité si elles sont pertinentes) :
 {{context}}
 
-Niveau de narration : {level}
+{level_instruction}
 
 Question / Action du joueur : {{question}}
 
@@ -748,9 +770,10 @@ Instructions :
 - Si le contexte contient des informations pertinentes, utilise-les en priorité.
 - Pour les demandes créatives (descriptions, PNJ, lieux, ambiances), utilise librement tes connaissances des Lames du Cardinal et de la France du XVIIème siècle.
 - Ne mentionne jamais les "documents" ou le "contexte" dans ta réponse.
+- Respecte impérativement les consignes de longueur indiquées ci-dessus.
 
 Réponds en suivant ce format :
-1. Description immersive (adapte la longueur au niveau choisi)
+1. Description immersive (respecte les consignes de longueur)
 2. Propose 2 à 4 options claires (format: OPTION 1: ..., OPTION 2: ..., etc.)
 3. Si nécessaire, liste les conséquences structurées:
    - [PNJ:Nom:Statut] (Statut: Ami, Ennemi, Neutre, etc.)
@@ -775,13 +798,15 @@ Mémoire des derniers échanges :
 
 Question : {{question}}
 
+{level_instruction}
+
 ⚠️ INSTRUCTIONS CRITIQUES :
 1. CHERCHE d'abord le chunk qui contient une DÉFINITION ou DESCRIPTION directe du sujet
 2. IGNORE les passages narratifs (scénarios, histoires, dialogues, noms de personnages)
 3. PRIVILÉGIE les chunks avec : VD, M, C, MD, Sortilèges, Rituels (= descriptions de règles)
 4. Si le Chunk #1 répond directement à la question, utilise-le en priorité
 5. Cite directement et complètement le texte pertinent
-6. Organise ta réponse avec des titres markdown (## et ###)
+6. Respecte impérativement le format demandé ci-dessus
 7. Si aucun chunk ne contient de définition/règle, dis-le clairement
 
 Ta réponse :"""

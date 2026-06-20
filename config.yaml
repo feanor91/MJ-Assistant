@@ -14,7 +14,7 @@ model:
   default: "mistral-nemo"
   temperature: 0.0
   top_p: 1.0
-  num_ctx: 16384  # ⚠️ AUGMENTÉ : Contexte plus large pour réponses longues (était 8192)
+  num_ctx: 32768  # Contexte 32K par défaut (ajustable via slider 16K-64K dans l'UI)
   num_predict: 2048  # ⚠️ NOUVEAU : Permet réponses jusqu'à 2048 tokens (~1500 mots)
   fallback_models:
     - "llama3"
@@ -34,7 +34,7 @@ rag:
   # 🆕 RE-RANKING : Améliore la qualité des chunks récupérés (+40-60% de précision)
   enable_reranking: true  # Active le re-ranking après retrieval initial
   rerank_model: "BAAI/bge-reranker-v2-m3"  # Modèle de re-ranking (cross-encoder)
-  k_initial_retrieval: 100  # Nombre de chunks à récupérer initialement (avant re-ranking)
+  k_initial_retrieval: 40   # Fetch large en encyclopédique (avant re-ranking CrossEncoder)
   # Note: Le nombre final de chunks est maintenant contrôlé par le SLIDER dans l'interface
   # (k_final_after_rerank et k_final_after_rerank_encyclo ne sont plus utilisés)
 
