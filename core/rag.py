@@ -627,22 +627,28 @@ class VectorStore:
                         if _arcane_key and _arcane_key not in _vd_to_arcane:
                             _vd_to_arcane[_arcane_key] = _tm.group(1).strip()
 
-            # 2. Enrichir les chunks corps (VD+M présents, pas de ## dans les 200 premiers chars)
+            # 2. Enrichir les chunks corps (VD+M présents, nom d'arcane absent/garbled)
+            # Attrape aussi les titres en police décorative dont l'encodage est garbled
             _enriched: List[Document] = []
             for _ch in all_chunks:
                 _ct = _ch.page_content
-                if ('VD' in _ct and 'M :' in _ct and
-                        not _re_vd.search(r'##', _ct[:200])):
+                if 'VD' in _ct and ('M :' in _ct or 'M:' in _ct):
                     _vm = _re_vd.search(r'VD\s*[:\s]+([^\n]+)', _ct)
                     if _vm:
                         _vd_key = _vm.group(1).strip().lower().split()[0]
                         _arcane_name = _vd_to_arcane.get(_vd_key)
                         if _arcane_name:
-                            _ch = Document(
-                                page_content=f"## {_arcane_name}\n{_ct}",
-                                metadata=_ch.metadata
-                            )
-                            print(f"  ✨ Enrichi : p.{_ch.metadata.get('page','?')} → ## {_arcane_name}")
+                            # Vérifier si les mots significatifs du nom d'arcane
+                            # sont présents dans les 200 premiers chars (titre déjà là)
+                            _sig_words = [w.lower() for w in _arcane_name.split() if len(w) >= 5]
+                            _first200 = _ct[:200].lower()
+                            _title_present = all(w in _first200 for w in _sig_words)
+                            if not _title_present:
+                                _ch = Document(
+                                    page_content=f"## {_arcane_name}\n{_ct}",
+                                    metadata=_ch.metadata
+                                )
+                                print(f"  ✨ Enrichi : p.{_ch.metadata.get('page','?')} → ## {_arcane_name}")
                 _enriched.append(_ch)
             all_chunks = _enriched
 
