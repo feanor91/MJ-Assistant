@@ -234,15 +234,135 @@ def render_timeline():
                 st.caption(f"_Horodatage: {entry['timestamp']}_")
 
 
+_EXCLUDED = {
+    "bge-m3:latest", "mxbai-embed-large:latest",
+    "minimax-m2:cloud",
+    "phi3:3.8b", "llama3.2:latest",
+    "glm-4.7-flash:latest",
+}
+
+_LABELS = {
+    "qwen3.6:35b-a3b":                    "Narration immersive — meilleure qualité",
+    "mistral-nemo:latest":                 "Narration FR — recommandé",
+    "maxwellb/gemma4-12b-it-oym:latest":   "Narration / Polyvalent",
+    "qwen2.5:14b":                         "Règles précises / Encyclopédique",
+    "phi4:latest":                         "Règles précises / Structuré",
+    "phi3:14b":                            "Polyvalent / Rapide",
+    "mistral:latest":                      "Rapide / Léger",
+    "llama3:latest":                       "Polyvalent",
+    "gpt-oss:latest":                      "Polyvalent",
+}
+
+# Modèles préférés par mode (ordre de priorité)
+_MODE_PRESETS = {
+    "MJ immersif": {
+        "model_priority": [
+            "mistral-nemo:latest",
+            "maxwellb/gemma4-12b-it-oym:latest",
+            "qwen3.6:35b-a3b",
+            "mistral:latest",
+        ],
+        "temperature": 0.8,
+        "top_p": 0.95,
+        "k_retrieval": 10,
+        "show_sources": False,
+    },
+    "Encyclopédique": {
+        "model_priority": [
+            "qwen2.5:14b",
+            "phi4:latest",
+            "mistral-nemo:latest",
+            "phi3:14b",
+        ],
+        "temperature": 0.0,
+        "top_p": 0.9,
+        "k_retrieval_encyclo": 30,
+        "source_filter": "rules_and_universe",
+        "show_sources": True,
+    },
+}
+
+
+def _apply_mode_presets(mode: str, available_models: list):
+    """Applique les réglages par défaut pour un mode donné."""
+    preset = _MODE_PRESETS.get(mode)
+    if not preset:
+        return
+
+    # Modèle : premier disponible dans la liste de priorité
+    chosen = next(
+        (m for m in preset["model_priority"] if m in available_models),
+        available_models[0] if available_models else None
+    )
+    if chosen:
+        st.session_state.current_model = chosen
+        st.session_state.model_selector = chosen
+
+    # Température
+    st.session_state.temperature = preset["temperature"]
+    st.session_state.temp_slider = preset["temperature"]
+
+    # Top-p
+    st.session_state.top_p = preset["top_p"]
+    st.session_state.top_p_slider = preset["top_p"]
+
+    # Affichage des sources
+    if "show_sources" in preset:
+        st.session_state.show_sources = preset["show_sources"]
+        st.session_state.show_sources_checkbox = preset["show_sources"]
+
+    # Réglages spécifiques au mode
+    if mode == "MJ immersif":
+        st.session_state.k_retrieval = preset["k_retrieval"]
+        st.session_state.k_mj_slider = preset["k_retrieval"]
+    elif mode == "Encyclopédique":
+        st.session_state.encyclo_k_retrieval = preset["k_retrieval_encyclo"]
+        st.session_state.k_retrieval_slider = preset["k_retrieval_encyclo"]
+        st.session_state.encyclo_source_filter = preset["source_filter"]
+
+
 def render_config_panel(config):
     """Affiche le panneau de configuration"""
     st.markdown("### ⚙️ Configuration")
+
+    from core.utils import get_ollama_models
+    raw_models = get_ollama_models()
+    filtered_models = [m for m in raw_models if m not in _EXCLUDED]
+
+    # ── Détection changement de mode et application des presets ──────────────
+    # On lit le sélecteur AVANT qu'il soit rendu (Streamlit met déjà la valeur
+    # dans session_state dès le début du rerun suivant l'interaction utilisateur)
+    incoming_mode = st.session_state.get("mode_selector",
+                                         st.session_state.get("mode", "MJ immersif"))
+    if incoming_mode != st.session_state.get("_last_applied_mode"):
+        _apply_mode_presets(incoming_mode, filtered_models)
+        st.session_state._last_applied_mode = incoming_mode
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _label(m):
+        tag = _LABELS.get(m)
+        return f"{m}  ({tag})" if tag else m
+
+    current_model = st.session_state.get('current_model', config['model']['default'])
+    default_index = filtered_models.index(current_model) if current_model in filtered_models else 0
+
+    selected_model = st.selectbox(
+        "Modèle",
+        filtered_models,
+        index=default_index,
+        key="model_selector",
+        format_func=_label,
+        help="Modèles Ollama disponibles localement"
+    )
+    st.session_state.current_model = selected_model
+
+    st.markdown("---")
 
     # Mode
     mode = st.selectbox(
         "Mode",
         ["MJ immersif", "Encyclopédique"],
-        index=0 if st.session_state.mode == "MJ immersif" else 1,
+        index=0 if st.session_state.get("mode", "MJ immersif") == "MJ immersif" else 1,
         key="mode_selector"
     )
     st.session_state.mode = mode
@@ -250,44 +370,33 @@ def render_config_panel(config):
 
     st.markdown("---")
 
-    # Mode MJ : Niveau de narration
-    if mode == "MJ immersif":
-        level = st.selectbox(
-            "Niveau de narration",
-            ["Résumé court", "Scène détaillée", "Longue narration immersive"],
-            key="narration_level_mj"
-        )
-        st.caption(f"Niveau sélectionné: {level}")
-
-    st.markdown("---")
-
     # Sliders
     col1, col2 = st.columns(2)
 
     with col1:
-        # Temps de réponse (MJ)
         if mode == "MJ immersif":
-            response_time = st.slider(
-                "Temps de réponse MJ (s)",
-                1, 60, int(st.session_state.temperature),
-                key="response_time_slider",
-                step=1,
-                help="Durée simulée entre la réponse du MJ et le début de la scène"
+            temp = st.slider(
+                "Température",
+                0.0, 1.0, float(st.session_state.get('temperature', 0.8)),
+                key="temp_slider",
+                step=0.05,
+                help="0.0 = Factuel/fidèle au contexte | 1.0 = Créatif (hallucine plus)"
             )
-            st.caption(f"Simulé: {response_time}s")
+            st.session_state.temperature = temp
+            st.caption(f"Actuel: {temp}")
         else:
-            st.caption("Mode MJ uniquement")
+            st.caption("🔒 Température fixée à 0.0 en mode Encyclopédique")
 
     with col2:
-        # Température
-        temp = st.slider(
-            "Température",
-            0.0, 1.0, float(st.session_state.top_p),
-            key="temp_slider",
-            step=0.01,
-            help="0.0 = Plus factuel/reproductible | 1.0 = Plus créatif/varié"
+        top_p = st.slider(
+            "Top-p",
+            0.0, 1.0, float(st.session_state.get('top_p', 0.95)),
+            key="top_p_slider",
+            step=0.05,
+            help="Diversité du vocabulaire — 1.0 = tous les tokens possibles"
         )
-        st.caption(f"Actuel: {temp}")
+        st.session_state.top_p = top_p
+        st.caption(f"Actuel: {top_p}")
 
     st.markdown("---")
 
@@ -298,7 +407,7 @@ def render_config_panel(config):
         _filter_options = [
             ("📖 Règles uniquement", "rules_only"),
             ("🌍 Univers + Romans", "universe_only"),
-            ("📖🌍 Règles + Univers (sans romans)", "rules_and_universe")
+            ("📖🌍 Règles + Univers (sans romans)", "rules_and_universe"),
         ]
         _filter_index = next(
             (i for i, (_, v) in enumerate(_filter_options) if v == st.session_state.encyclo_source_filter),

@@ -4,6 +4,7 @@ Module de gestion du RAG (Retrieval-Augmented Generation)
 """
 
 import os
+import pickle
 import shutil
 import hashlib
 import json
@@ -82,6 +83,43 @@ try:
 except ImportError:
     RERANKER_AVAILABLE = False
     print("⚠️ CrossEncoder non disponible. Installe avec: pip install sentence-transformers")
+
+# Import pour chunking sémantique
+try:
+    from langchain_experimental.text_splitter import SemanticChunker
+    SEMANTIC_CHUNKER_AVAILABLE = True
+except ImportError:
+    SEMANTIC_CHUNKER_AVAILABLE = False
+    print("⚠️ SemanticChunker non disponible. Installe avec: pip install langchain-experimental")
+
+# Import pour hybrid search (BM25)
+try:
+    from langchain_community.retrievers.bm25 import BM25Retriever
+    BM25_AVAILABLE = True
+except Exception:
+    BM25_AVAILABLE = False
+    print("⚠️ BM25 non disponible. Installe avec: pip install rank_bm25")
+
+
+class SimpleEnsembleRetriever:
+    """Fusion BM25 + vectoriel sans dépendance EnsembleRetriever."""
+
+    def __init__(self, retrievers: list, weights: list):
+        self.retrievers = retrievers
+        self.weights = weights
+
+    def invoke(self, query: str) -> list:
+        seen, results = set(), []
+        for retriever in self.retrievers:
+            try:
+                for doc in retriever.invoke(query):
+                    key = doc.page_content[:120]
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(doc)
+            except Exception:
+                pass
+        return results
 
 # Import pour typing
 from typing import Any
@@ -345,7 +383,6 @@ class DocumentExtractor:
                     if folder == "regles" or "règles" in folder:
                         category = "rules"
                     elif folder == "univers":
-                        # Distinguer livre d'univers des romans
                         if "livre 1" in file_name or "l'univers" in file_name or "univers" in file_name:
                             category = "universe_book"
                         else:
@@ -411,19 +448,47 @@ class VectorStore:
             # Préparer les chunks avec métadonnées
             all_chunks = []
 
+            # Préparer le splitter (sémantique si disponible, sinon fixe)
+            if SEMANTIC_CHUNKER_AVAILABLE:
+                print("🧠 Chunking sémantique activé (BAAI/bge-m3)")
+                if progress_callback:
+                    progress_callback("Chargement du modèle de chunking sémantique...")
+                try:
+                    splitter = SemanticChunker(
+                        self.embeddings,
+                        breakpoint_threshold_type="percentile",
+                        breakpoint_threshold_amount=85
+                    )
+                    use_semantic = True
+                except Exception as e:
+                    print(f"⚠️ SemanticChunker échoué ({e}), fallback sur chunking fixe")
+                    splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=self.chunk_size,
+                        chunk_overlap=self.chunk_overlap
+                    )
+                    use_semantic = False
+            else:
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=self.chunk_size,
+                    chunk_overlap=self.chunk_overlap
+                )
+                use_semantic = False
+
             for name, doc_data in documents.items():
                 content = doc_data["content"]
                 category = doc_data["category"]
                 path = doc_data["path"]
 
-                # Découper ce document en chunks
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=self.chunk_size,
-                    chunk_overlap=self.chunk_overlap
-                )
-                doc_chunks = splitter.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
+                try:
+                    doc_chunks = splitter.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
+                except Exception:
+                    # Fallback par document si le sémantique échoue sur ce doc
+                    fallback = RecursiveCharacterTextSplitter(
+                        chunk_size=self.chunk_size,
+                        chunk_overlap=self.chunk_overlap
+                    )
+                    doc_chunks = fallback.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
 
-                # Créer des Documents avec métadonnées
                 for chunk in doc_chunks:
                     all_chunks.append(
                         Document(
@@ -436,9 +501,18 @@ class VectorStore:
                         )
                     )
 
-            print(f"✅ {len(all_chunks)} chunks créés avec métadonnées")
+            chunk_type = "sémantiques" if use_semantic else "fixes"
+            print(f"✅ {len(all_chunks)} chunks {chunk_type} créés avec métadonnées")
             if progress_callback:
-                progress_callback(f"Création de {len(all_chunks)} chunks...")
+                progress_callback(f"Création de {len(all_chunks)} chunks {chunk_type}...")
+
+            # Sauvegarder les chunks pour BM25 (hybrid search)
+            if BM25_AVAILABLE:
+                bm25_file = db_dir / "bm25_docs.pkl"
+                db_dir.mkdir(parents=True, exist_ok=True)
+                with open(bm25_file, "wb") as f:
+                    pickle.dump(all_chunks, f)
+                print("✅ Index BM25 sauvegardé")
 
             db_dir.mkdir(parents=True, exist_ok=True)
 
@@ -532,6 +606,23 @@ class VectorStore:
             raise ValueError("VectorDB not initialized. Call build_or_load first.")
         return self._vectordb.as_retriever(search_kwargs={"k": k})
 
+    def get_bm25_retriever(self, db_dir: Path, k: int = 20):
+        """Charge et retourne un retriever BM25 depuis le pickle sauvegardé"""
+        if not BM25_AVAILABLE:
+            return None
+        bm25_file = db_dir / "bm25_docs.pkl"
+        if not bm25_file.exists():
+            return None
+        try:
+            with open(bm25_file, "rb") as f:
+                docs = pickle.load(f)
+            retriever = BM25Retriever.from_documents(docs)
+            retriever.k = k
+            return retriever
+        except Exception as e:
+            print(f"⚠️ Impossible de charger BM25 : {e}")
+            return None
+
 
 class RAGChain:
     """Gestion de la chaîne RAG complète avec re-ranking"""
@@ -601,13 +692,32 @@ class RAGChain:
         try:
             from langchain_ollama import ChatOllama
 
-            return ChatOllama(
-                model=model_name,
-                temperature=temperature,
-                top_p=top_p,
-                num_ctx=num_ctx,
-                num_predict=num_predict
-            )
+            # Modèles "thinking" (qwen3, gemma4, deepseek-r1…) : tout le raisonnement
+            # part dans <think>...</think> et le content visible reste vide.
+            # On désactive ce mode pour obtenir une réponse directe.
+            _thinking_families = ('qwen3', 'gemma4', 'gemma3', 'deepseek-r1', 'qwq')
+            extra = {}
+            if any(f in model_name.lower() for f in _thinking_families):
+                extra['think'] = False
+
+            try:
+                return ChatOllama(
+                    model=model_name,
+                    temperature=temperature,
+                    top_p=top_p,
+                    num_ctx=num_ctx,
+                    num_predict=num_predict,
+                    **extra
+                )
+            except TypeError:
+                # think= non supporté dans cette version — on retire
+                return ChatOllama(
+                    model=model_name,
+                    temperature=temperature,
+                    top_p=top_p,
+                    num_ctx=num_ctx,
+                    num_predict=num_predict
+                )
         except TypeError:
             # Fallback si certains paramètres ne sont pas supportés
             try:
@@ -627,12 +737,17 @@ class RAGChain:
 Mémoire de la partie :
 {memory}
 
-Contexte pertinent (extraits du corpus) :
+Contexte extrait des documents (utilise ces informations en priorité si elles sont pertinentes) :
 {{context}}
 
 Niveau de narration : {level}
 
 Question / Action du joueur : {{question}}
+
+Instructions :
+- Si le contexte contient des informations pertinentes, utilise-les en priorité.
+- Pour les demandes créatives (descriptions, PNJ, lieux, ambiances), utilise librement tes connaissances des Lames du Cardinal et de la France du XVIIème siècle.
+- Ne mentionne jamais les "documents" ou le "contexte" dans ta réponse.
 
 Réponds en suivant ce format :
 1. Description immersive (adapte la longueur au niveau choisi)

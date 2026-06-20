@@ -66,8 +66,8 @@ def get_ollama_models() -> List[str]:
             parts = line.split()
             if parts:
                 candidate = parts[0]
-                # Validation basique
-                if re.match(r"^[\w\-\.:]+$", candidate):
+                # Validation basique (inclut / pour les modèles user/model:tag)
+                if re.match(r"^[\w\-\.:/]+$", candidate):
                     models.append(candidate)
         
         return models if models else get_fallback_models()

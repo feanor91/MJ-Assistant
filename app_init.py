@@ -128,6 +128,9 @@ def init_session_state(config):
         st.session_state.message_count = 0
         st.session_state.auto_save_interval = config['ui'].get('auto_save_interval', 5)
 
+        # Historique des requêtes (navigation flèche haut/bas)
+        st.session_state.query_history = []
+
         st.session_state.initialized = True
 
 
@@ -279,41 +282,57 @@ def load_vectorstore_only(_config):
     return vectordb
 
 
+@st.cache_resource(show_spinner=False)
+def _load_bm25_docs(_db_dir):
+    """Charge les documents BM25 depuis le pickle (cached)"""
+    import pickle
+    bm25_file = Path(str(_db_dir)) / "bm25_docs.pkl"
+    if not bm25_file.exists():
+        return None
+    try:
+        with open(bm25_file, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
+
 def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, system_prompt, memory, short_memory, level, source_filter="rules_and_universe", query=""):
     """Crée la chaîne QA (doit être recréée à chaque requête car contient la mémoire)"""
-    from core.rag import RAGChain
+    from core.rag import RAGChain, BM25_AVAILABLE
 
     rag_chain = RAGChain(config)
 
-    # Filtrer les sources selon le mode
+    # Retriever vectoriel (avec filtre catégorie si mode encyclopédique)
     if mode == "Encyclopédique":
-        # Mode encyclopédique : filtrage selon le choix de l'utilisateur
-        # ⚠️ Chroma utilise {"category": {"$in": [...]}} au lieu de $or
         if source_filter == "rules_only":
-            # Option 1 : Règles uniquement (détaillées)
-            filter_config = {
-                "category": {"$in": ["rules", "unknown"]}
-            }
+            filter_config = {"category": {"$in": ["rules", "unknown"]}}
         elif source_filter == "universe_only":
-            # Option 2 : Univers uniquement (générales + romans)
-            filter_config = {
-                "category": {"$in": ["universe_book", "novel"]}
-            }
-        else:  # rules_and_universe (par défaut)
-            # Option 3 : Règles + Univers (sans romans)
-            filter_config = {
-                "category": {"$in": ["rules", "universe_book", "unknown"]}
-            }
+            filter_config = {"category": {"$in": ["universe_book", "novel"]}}
+        else:  # rules_and_universe
+            filter_config = {"category": {"$in": ["rules", "universe_book", "unknown"]}}
 
-        retriever = vectordb.as_retriever(
-            search_kwargs={
-                "k": k,
-                "filter": filter_config
-            }
+        vector_retriever = vectordb.as_retriever(
+            search_kwargs={"k": k, "filter": filter_config}
         )
     else:
-        # Mode MJ : tous les documents
-        retriever = vectordb.as_retriever(search_kwargs={"k": k})
+        vector_retriever = vectordb.as_retriever(search_kwargs={"k": k})
+
+    # Hybrid search : combiner BM25 (mots-clés) + vectoriel (sémantique)
+    retriever = vector_retriever
+    if BM25_AVAILABLE:
+        bm25_docs = _load_bm25_docs(config['paths']['db_dir'])
+        if bm25_docs:
+            try:
+                from langchain_community.retrievers.bm25 import BM25Retriever
+                from core.rag import SimpleEnsembleRetriever
+                bm25_retriever = BM25Retriever.from_documents(bm25_docs)
+                bm25_retriever.k = k
+                retriever = SimpleEnsembleRetriever(
+                    retrievers=[bm25_retriever, vector_retriever],
+                    weights=[0.4, 0.6]
+                )
+            except Exception as e:
+                print(f"⚠️ Hybrid search désactivé ({e}), fallback vectoriel")
 
     # Retourner les sources si l'utilisateur veut voir les sources OU les chunks de debug
     return_sources = st.session_state.get('show_sources', False) or st.session_state.get('show_debug_chunks', False)
@@ -384,52 +403,65 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
             query=query  # 🆕 Passer la query pour le re-ranking
         )
 
-        # Récupérer les documents via le retriever, puis invoquer la chaîne
+        # Récupérer les documents avec scores de pertinence réels
         retriever = qa_chain["retriever"]
         format_context = qa_chain["format_context"]
-        source_docs = retriever.invoke(query)
-        context_text = format_context(source_docs)
 
+        # Score de pertinence réel via Chroma (0=hors-sujet, 1=parfait)
+        confidence = 0.0
+        try:
+            scored_docs = vectordb.similarity_search_with_relevance_scores(query, k=5)
+            if scored_docs:
+                confidence = sum(s for _, s in scored_docs) / len(scored_docs)
+                print(f"📊 Scores de pertinence : {[round(s,2) for _,s in scored_docs[:3]]}")
+        except Exception:
+            pass
+
+        # Récupérer les chunks via le retriever (BM25 + vectoriel si dispo)
+        source_docs = retriever.invoke(query)
+
+        # Avertissement console si pertinence faible
+        if confidence < 0.3:
+            print(f"⚠️ Pertinence faible ({confidence:.0%}) — contexte probablement hors-sujet")
+
+        context_text = format_context(source_docs)
         result = qa_chain["chain"].invoke({"context": context_text, "question": query})
 
-        # 🔍 DEBUG : Afficher ce qui est retourné par le modèle
-        print("\n" + "="*60)
-        print("🔍 DEBUG - Résultat brut du modèle :")
-        print("="*60)
-        print("Type du résultat :", type(result))
+        import re as _re
 
-        # Extraire la réponse (ChatMessage retourne .content)
+        # 1. Récupérer le contenu brut
         if hasattr(result, 'content'):
-            response_text = result.content
+            response_text = result.content or ""
         else:
             response_text = str(result)
 
-        print("\n📝 Réponse extraite :")
-        print("Longueur :", len(response_text), "caractères")
-        print("Premiers 200 caractères :", response_text[:200])
-        print("Nombre de sources :", len(source_docs))
+        # 2. Si vide, chercher dans additional_kwargs (certaines versions de langchain-ollama
+        #    placent le contenu des modèles "thinking" dans ce champ plutôt que dans content)
+        if not response_text.strip() and hasattr(result, 'additional_kwargs'):
+            ak = result.additional_kwargs
+            response_text = (
+                ak.get('thinking') or ak.get('reasoning_content') or ak.get('think') or ""
+            ).strip()
+            if response_text:
+                print(f"💡 Contenu récupéré depuis additional_kwargs")
 
-        # 🔍 DEBUG supplémentaire si réponse vide
-        if len(response_text) == 0:
-            print("\n⚠️ ATTENTION : Réponse vide détectée !")
-            print("Vérification du contexte envoyé au modèle...")
-            if source_docs:
-                print("\n📄 Aperçu des sources récupérées :")
-                for i, doc in enumerate(source_docs[:3], 1):  # Premiers 3 chunks
-                    print(f"\n--- Chunk {i} (source: {doc.metadata.get('source', 'inconnu')}) ---")
-                    print(doc.page_content[:300])
-                    print("...")
+        # 3. Supprimer les blocs <think>...</think> et garder la réponse visible
+        if '<think>' in response_text:
+            after_think = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
+            if after_think:
+                response_text = after_think
             else:
-                print("❌ Aucune source récupérée ! Problème de recherche vectorielle.")
+                # Seul le thinking a été généré — l'utiliser comme réponse
+                m = _re.search(r'<think>(.*?)</think>', response_text, _re.DOTALL)
+                response_text = m.group(1).strip() if m else response_text
 
-        print("="*60 + "\n")
-
-        # Calculer la confiance basée sur les scores des documents
+        # Debug
+        print(f"📝 Réponse : {len(response_text)} chars | Confiance : {confidence:.0%} | Sources : {len(source_docs)}")
+        if not response_text.strip():
+            print(f"⚠️ Réponse vide ! type={type(result).__name__} | content={repr(getattr(result,'content','?'))[:200]} | ak_keys={list(getattr(result,'additional_kwargs',{}).keys())}")
         if source_docs:
-            scores = [doc.metadata.get("score", 0.5) for doc in source_docs]
-            confidence = sum(scores) / len(scores) if scores else 0.5
-        else:
-            confidence = 0.0
+            for i, doc in enumerate(source_docs[:3], 1):
+                print(f"  Chunk {i}: [{doc.metadata.get('category','?')}] {doc.metadata.get('source','?')} — {doc.page_content[:80]}...")
 
         # Créer l'objet résultat
         result_obj = {
@@ -472,6 +504,95 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
     except Exception as e:
         if hasattr(st.session_state, 'statistics'):
             st.session_state.statistics.record_query(success=False)
+
+        err_str = str(e)
+        # Crash VRAM / llama-server killed
+        if "CUDA error" in err_str or "llama-server process has terminated" in err_str or "ResponseError" in type(e).__name__:
+            model = st.session_state.get('current_model', '?')
+            raise RuntimeError(
+                f"💥 **Mémoire GPU insuffisante** — le modèle `{model}` a manqué de VRAM "
+                f"pour cette génération.\n\n"
+                f"**Solutions :**\n"
+                f"- Utilise `mistral-nemo` ou `gemma4-12b` (7 GB) pour les scènes créatives\n"
+                f"- Réserve `qwen3.6:35b-a3b` pour des questions courtes et précises\n"
+                f"- Réduis le contexte dans `config.yaml` : `num_ctx: 8192`"
+            ) from e
+        raise e
+
+
+def process_creative_query(query: str, config, level: str):
+    """Mode narratif pur : appel direct au LLM sans RAG.
+    Utilise uniquement le system_prompt du jeu comme contexte — pas de chunks de documents.
+    """
+    try:
+        system_prompt = config['prompts']['mj_system']
+        model = st.session_state.current_model
+        temp = st.session_state.temperature
+        top_p = st.session_state.top_p
+
+        # Contexte de la mémoire courante
+        memory_text = st.session_state.mj_memory.format_for_prompt(
+            n=config['memory']['short_memory_context']
+        )
+
+        from core.rag import RAGChain
+        from langchain_core.prompts import PromptTemplate
+        from langchain_core.output_parsers import StrOutputParser
+
+        rag_chain = RAGChain(config)
+        llm = rag_chain.create_llm(model, temp, top_p)
+
+        template = f"""{system_prompt}
+
+Mémoire de la partie :
+{memory_text}
+
+Niveau de narration : {level}
+
+Demande du joueur : {{question}}
+
+Réponds librement en te basant sur ta connaissance de "Les Lames du Cardinal" et de la France du XVIIème siècle sous Louis XIII. Sois immersif, précis et cohérent avec l'univers. Ne mentionne jamais de "documents" ni de "contexte".
+
+Réponds en suivant ce format :
+1. Description immersive (adapte la longueur au niveau choisi)
+2. Propose 2 à 4 options claires (format: OPTION 1: ..., OPTION 2: ..., etc.)
+3. Si nécessaire, liste les conséquences structurées:
+   - [PNJ:Nom:Statut]
+   - [Lieu:Nom:Statut]
+   - [Intrigue:Nom:Statut]
+
+Ta réponse :"""
+
+        prompt = PromptTemplate(template=template, input_variables=["question"])
+        chain = prompt | llm | StrOutputParser()
+        response_text = chain.invoke({"question": query})
+
+        # Strip balises thinking
+        import re as _re
+        if '<think>' in response_text:
+            after = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
+            response_text = after if after else response_text
+
+        print(f"✨ Mode narratif pur : {len(response_text)} chars générés")
+
+        # Enregistrer dans la mémoire MJ
+        st.session_state.mj_memory.add(query, response_text)
+
+        # Parser pour mettre à jour le game_state
+        from core.parser import ResponseParser
+        parsed = ResponseParser.parse(response_text)
+        st.session_state.game_state.update_from_parsed(parsed)
+
+        from datetime import datetime
+        st.session_state.timeline.append({
+            "query": query,
+            "response": response_text,
+            "timestamp": datetime.now().isoformat()
+        })
+
+        return {"response": response_text, "sources": [], "confidence": None}
+
+    except Exception as e:
         raise e
 
 
@@ -605,15 +726,39 @@ def main():
         # Zone d'interaction
         st.markdown("### 💬 Interaction")
 
-        # Niveau de narration (mode MJ)
+        # Niveau de narration + toggle narratif pur (mode MJ)
         if st.session_state.mode == "MJ immersif":
-            level = st.selectbox(
-                "Niveau de narration:",
-                ["Résumé court", "Scène détaillée", "Longue narration immersive"],
-                key="narration_level"
-            )
+            col_lvl, col_narr = st.columns([3, 2])
+            with col_lvl:
+                level = st.selectbox(
+                    "Niveau de narration:",
+                    ["Résumé court", "Scène détaillée", "Longue narration immersive"],
+                    key="narration_level"
+                )
+            with col_narr:
+                st.markdown("<br>", unsafe_allow_html=True)
+                creative_mode = st.toggle(
+                    "✨ Narratif pur (sans RAG)",
+                    value=False,
+                    key="creative_mode",
+                    help="Descriptions, PNJ, scènes : le modèle crée librement sans chercher dans les documents"
+                )
         else:
             level = "N/A"
+            creative_mode = False
+
+        # Historique des requêtes — boutons cliquables pour rappeler une requête précédente
+        if st.session_state.query_history:
+            with st.expander(f"🕐 Historique ({len(st.session_state.query_history)} requêtes)", expanded=False):
+                for _i, _past_q in enumerate(st.session_state.query_history):
+                    if st.button(
+                        f"↩ {_past_q[:80]}{'…' if len(_past_q) > 80 else ''}",
+                        key=f"hist_btn_{_i}",
+                        use_container_width=True
+                    ):
+                        # Pré-charger dans le session_state du widget AVANT rerun
+                        st.session_state["user_input"] = _past_q
+                        st.rerun()
 
         # Utiliser un formulaire pour gérer l'envoi avec Entrée
         with st.form(key="query_form", clear_on_submit=True):
@@ -632,15 +777,28 @@ def main():
 
         # Traitement de la requête
         if submit and user_query and user_query.strip():
-            with st.spinner("🤔 Le MJ réfléchit..."):
+            # Sauvegarder dans l'historique (10 entrées max, sans doublons consécutifs)
+            history = st.session_state.query_history
+            if not history or history[0] != user_query:
+                history.insert(0, user_query)
+                st.session_state.query_history = history[:10]
+
+            with st.spinner("✨ Le MJ crée..." if creative_mode else "🤔 Le MJ réfléchit..."):
                 try:
-                    result = process_query(
-                        query=user_query,
-                        config=config,
-                        mode=st.session_state.mode,
-                        level=level,
-                        vectordb=vectordb
-                    )
+                    if creative_mode and st.session_state.mode == "MJ immersif":
+                        result = process_creative_query(
+                            query=user_query,
+                            config=config,
+                            level=level
+                        )
+                    else:
+                        result = process_query(
+                            query=user_query,
+                            config=config,
+                            mode=st.session_state.mode,
+                            level=level,
+                            vectordb=vectordb
+                        )
 
                     # Marquer que la première requête a été envoyée
                     st.session_state.first_query_sent = True
@@ -651,6 +809,15 @@ def main():
 
                     # Affichage de la réponse
                     st.markdown("### ✅ Réponse")
+
+                    # Avertissement si pertinence faible (RAG uniquement)
+                    if result.get('confidence') is not None and result['confidence'] < 0.3:
+                        st.warning(
+                            f"⚠️ **Pertinence faible ({result['confidence']:.0%})** — "
+                            "Les documents récupérés sont peut-être hors-sujet. "
+                            "Pour les questions de règles, utilise le mode **Encyclopédique** "
+                            "avec le filtre **Règles uniquement**."
+                        )
 
                     if result['response'] and len(result['response'].strip()) > 0:
                         # Détection d'hallucination potentielle
@@ -711,10 +878,12 @@ def main():
                                     st.text(preview + "...")
                                     st.markdown("---")
 
-                    # Confiance RAG
-                    if result['confidence'] > 0:
+                    # Confiance RAG (uniquement si on a utilisé le RAG)
+                    if result.get('confidence') is not None and result['confidence'] > 0:
                         confidence_color = "🟢" if result['confidence'] > 0.7 else "🟡" if result['confidence'] > 0.4 else "🔴"
                         st.caption(f"{confidence_color} Confiance RAG: {result['confidence']:.0%}")
+                    elif creative_mode:
+                        st.caption("✨ Mode narratif pur — génération libre sans RAG")
 
                     # Mode debug : afficher le contexte complet envoyé au modèle
                     if st.session_state.get('show_debug_chunks', False):
@@ -749,10 +918,18 @@ def main():
                                 preview = doc.page_content[:400].replace("\n", " ")
                                 st.markdown(f"**Source {i}:** {preview}...")
 
+                except RuntimeError as e:
+                    st.error(str(e))
                 except Exception as e:
-                    st.error(f"❌ Erreur: {e}")
-                    import traceback
-                    st.exception(traceback.format_exc())
+                    err_str = str(e)
+                    if "CUDA error" in err_str or "llama-server process has terminated" in err_str:
+                        model = st.session_state.get('current_model', '?')
+                        st.error(f"💥 **Crash VRAM** — `{model}` est trop grand pour cette génération.")
+                        st.info("Utilise `mistral-nemo` ou `gemma4-12b` pour les scènes créatives longues.")
+                    else:
+                        st.error(f"❌ Erreur: {e}")
+                        import traceback
+                        st.exception(traceback.format_exc())
 
         # Affichage de la mémoire
         st.markdown("---")
