@@ -912,18 +912,18 @@ Question : {{question}}
 
 {level_instruction}
 
-⚠️ INSTRUCTIONS CRITIQUES :
-1. CHERCHE d'abord le chunk qui contient une DÉFINITION ou DESCRIPTION directe du sujet
-2. IGNORE les passages narratifs (scénarios, histoires, dialogues, noms de personnages)
-3. PRIVILÉGIE les chunks avec : VD, M, C, MD, Sortilèges, Rituels (= descriptions de règles)
-4. Si le Chunk #1 répond directement à la question, utilise-le en priorité
-5. Cite directement et complètement le texte pertinent
-6. Respecte impérativement le format demandé ci-dessus
-7. Si aucun chunk ne contient de définition/règle, dis-le clairement
-8. Cite tes sources avec (Réf.X) après chaque information issue des documents.
-   Exemple : "Le score de Courage est de 3 par défaut (Réf.1)."
-9. STOP dès que tu as répondu à la question. Ne répète JAMAIS une information déjà énoncée.
-   Chaque fait doit apparaître UNE SEULE FOIS dans ta réponse.
+🔴 RÈGLE ABSOLUE — LIS AVANT DE RÉPONDRE :
+Si un chunk marqué [⭐ CORRESPONDANCE DIRECTE] est présent dans le contexte :
+→ Son contenu EST la réponse. Utilise-le intégralement, même s'il est court.
+→ NE DIS JAMAIS "il n'y a pas de définition" si ce marqueur existe.
+→ Un chunk court avec "VD:", "##", ou le nom exact du sujet = définition complète.
+
+⚠️ INSTRUCTIONS :
+1. Cherche les chunks marqués [⭐ CORRESPONDANCE DIRECTE] — ce sont les plus pertinents
+2. Ignore les passages purement narratifs (scénarios, histoires sans règles)
+3. Cite directement le texte pertinent, avec (Réf.X) après chaque information
+4. STOP dès que tu as répondu. Ne répète JAMAIS une information déjà énoncée.
+5. Si AUCUN chunk ne contient le sujet demandé, dis-le clairement
 
 Ta réponse :"""
             return PromptTemplate(

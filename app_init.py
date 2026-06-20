@@ -433,18 +433,30 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         # Limite à 1200 chars par chunk pour éviter de saturer le contexte LLM
         _CHUNK_MAX_CHARS = 1200
         if mode == "Encyclopédique":
+            # Extraire les mots-clés significatifs de la query pour détecter les correspondances
+            import re as _re2
+            _query_words = set(w.lower() for w in _re2.findall(r'\w{4,}', query))
+
             def format_context(docs):
                 parts = []
                 for i, doc in enumerate(docs, 1):
                     page = doc.metadata.get('page', '?')
                     source = doc.metadata.get('source', '?')
                     section = doc.metadata.get('section', '')
-                    ref_header = f"[Réf. {i} — {source}, p.{page}]"
-                    if section:
-                        ref_header += f" — {section}"
                     content = doc.page_content
                     if len(content) > _CHUNK_MAX_CHARS:
                         content = content[:_CHUNK_MAX_CHARS] + "…"
+
+                    # Détecte si ce chunk contient directement le sujet demandé
+                    _content_words = set(w.lower() for w in _re2.findall(r'\w{4,}', content))
+                    _overlap = len(_query_words & _content_words)
+                    _has_title = any(f"## {w}" in content.lower() or f"# {w}" in content.lower()
+                                     for w in _query_words)
+                    _is_direct = _has_title or _overlap >= max(2, len(_query_words) * 0.4)
+
+                    ref_header = f"[{'⭐ CORRESPONDANCE DIRECTE — ' if _is_direct else ''}Réf. {i} — {source}, p.{page}]"
+                    if section:
+                        ref_header += f" — {section}"
                     parts.append(f"{ref_header}\n{content}")
                 return "\n\n---\n\n".join(parts)
 
