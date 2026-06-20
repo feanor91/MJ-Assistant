@@ -429,6 +429,20 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         retriever = qa_chain["retriever"]
         format_context = qa_chain["format_context"]
 
+        # En mode encyclopédique : format context avec marqueurs de référence
+        if mode == "Encyclopédique":
+            def format_context(docs):
+                parts = []
+                for i, doc in enumerate(docs, 1):
+                    page = doc.metadata.get('page', '?')
+                    source = doc.metadata.get('source', '?')
+                    section = doc.metadata.get('section', '')
+                    ref_header = f"[Réf. {i} — {source}, p.{page}]"
+                    if section:
+                        ref_header += f" — {section}"
+                    parts.append(f"{ref_header}\n{doc.page_content}")
+                return "\n\n---\n\n".join(parts)
+
         # Score de pertinence réel via Chroma (0=hors-sujet, 1=parfait)
         confidence = 0.0
         try:
@@ -493,6 +507,23 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                 m = _re.search(r'<think>(.*?)</think>', response_text, _re.DOTALL)
                 response_text = m.group(1).strip() if m else response_text
 
+        # Extraire les références citées (Réf.X) depuis la réponse encyclopédique
+        cited_sources = []
+        if mode == "Encyclopédique":
+            seen_refs = set()
+            for m in _re.finditer(r'\(Réf\.\s*(\d+)\)', response_text):
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(source_docs) and idx not in seen_refs:
+                    seen_refs.add(idx)
+                    doc = source_docs[idx]
+                    cited_sources.append({
+                        "ref": idx + 1,
+                        "page": doc.metadata.get('page', '?'),
+                        "source": doc.metadata.get('source', '?'),
+                        "path": doc.metadata.get('path', ''),
+                        "section": doc.metadata.get('section', ''),
+                    })
+
         # Debug
         print(f"📝 Réponse : {len(response_text)} chars | Confiance : {confidence:.0%} | Sources : {len(source_docs)}")
         if not response_text.strip():
@@ -509,6 +540,7 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
             "elapsed": _elapsed,
             "tokens_in": _tokens_in,
             "tokens_out": _tokens_out,
+            "cited_sources": cited_sources,
         }
 
         # Enregistrer dans la mémoire
@@ -719,6 +751,37 @@ Ta réponse :"""
 
     except Exception as e:
         raise e
+
+
+@st.cache_data(show_spinner=False)
+def _render_pdf_page(pdf_path: str, page_num: int) -> bytes:
+    """Rend une page PDF en image PNG via PyMuPDF (résolution x2)."""
+    try:
+        import fitz
+        doc = fitz.open(pdf_path)
+        if page_num < 1 or page_num > len(doc):
+            doc.close()
+            return None
+        page = doc[page_num - 1]
+        mat = fitz.Matrix(2.0, 2.0)
+        pix = page.get_pixmap(matrix=mat)
+        png = pix.tobytes("png")
+        doc.close()
+        return png
+    except Exception as e:
+        print(f"⚠️ Erreur rendu page PDF: {e}")
+        return None
+
+
+def _find_pdf_path(filename: str, config: dict) -> str:
+    """Cherche le chemin absolu d'un PDF dans le dossier Data."""
+    import os
+    pdf_root = config['paths'].get('pdf_root', 'Data')
+    base_dir = config['paths'].get('base_dir', '.')
+    for root, _dirs, files in os.walk(os.path.join(base_dir, pdf_root)):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
 
 
 def main():
@@ -1052,6 +1115,20 @@ def main():
                     if _caption_parts:
                         st.caption(" · ".join(_caption_parts))
 
+                    # Sources citées (mode encyclopédique uniquement)
+                    if mode == "Encyclopédique" and result.get('cited_sources'):
+                        st.markdown("**📚 Sources :**")
+                        _msg_count = st.session_state.get('message_count', 0)
+                        _btn_cols = st.columns(min(len(result['cited_sources']), 5))
+                        for _i, _ref in enumerate(result['cited_sources']):
+                            _col = _btn_cols[_i % len(_btn_cols)]
+                            _page_lbl = f"p.{_ref['page']}" if _ref['page'] != '?' else _ref['source']
+                            with _col:
+                                if st.button(f"📄 {_page_lbl}", key=f"pdfref_{_ref['source']}_{_ref['page']}_{_msg_count}_{_i}"):
+                                    st.session_state._pdf_view = _ref
+                                    st.session_state._pdf_view_config = config
+                                    st.rerun()
+
                     # Mode debug : afficher le contexte complet envoyé au modèle
                     if st.session_state.get('show_debug_chunks', False):
                         # Afficher quel filtre est actif
@@ -1097,6 +1174,27 @@ def main():
                         st.error(f"❌ Erreur: {e}")
                         import traceback
                         st.exception(traceback.format_exc())
+
+        # Visionneuse PDF (persiste entre requêtes, s'affiche quand une source est cliquée)
+        if '_pdf_view' in st.session_state and st.session_state._pdf_view:
+            _view = st.session_state._pdf_view
+            _cfg = st.session_state.get('_pdf_view_config', config)
+            _view_title = f"📄 {_view['source']} — p.{_view['page']}"
+            if _view.get('section'):
+                _view_title += f"  ({_view['section']})"
+            with st.expander(_view_title, expanded=True):
+                _pdf_path = _find_pdf_path(_view['source'], _cfg)
+                if _pdf_path and _view['page'] != '?':
+                    _png = _render_pdf_page(_pdf_path, int(_view['page']))
+                    if _png:
+                        st.image(_png, use_container_width=True)
+                    else:
+                        st.warning("Impossible de rendre cette page.")
+                else:
+                    st.info(f"Source : {_view['source']}, p.{_view['page']}")
+                if st.button("✖ Fermer la visionneuse", key="close_pdf_viewer"):
+                    del st.session_state['_pdf_view']
+                    st.rerun()
 
         # Affichage de la mémoire
         st.markdown("---")

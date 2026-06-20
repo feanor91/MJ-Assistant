@@ -233,96 +233,164 @@ class DocumentExtractor:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
     
     @staticmethod
-    def extract_from_pdf(pdf_path: Path, max_pages: Optional[int] = None) -> str:
-        """Extrait le texte d'un PDF (utilise PyMuPDF si disponible pour meilleure qualité)"""
+    def extract_from_pdf(pdf_path: Path, max_pages: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Extrait le texte page par page avec nettoyage headers/footers et détection sections.
+
+        Returns: [{"page": int, "text": str, "section": str}, ...]
+        """
+        import re as _re
+
+        if not USE_PYMUPDF:
+            pages_out = []
+            try:
+                if USE_PDFPLUMBER:
+                    with pdfplumber.open(pdf_path) as pdf:
+                        pdf_pages = pdf.pages[:max_pages] if max_pages else pdf.pages
+                        for i, p in enumerate(pdf_pages):
+                            pages_out.append({"page": i + 1, "text": p.extract_text() or "", "section": ""})
+                else:
+                    import PyPDF2
+                    with open(pdf_path, "rb") as f:
+                        reader = PyPDF2.PdfReader(f)
+                        pdf_pages = reader.pages[:max_pages] if max_pages else reader.pages
+                        for i, p in enumerate(pdf_pages):
+                            pages_out.append({"page": i + 1, "text": p.extract_text() or "", "section": ""})
+            except Exception as e:
+                pages_out.append({"page": 1, "text": f"[Erreur extraction PDF: {e}]", "section": ""})
+            return pages_out
+
         try:
-            if USE_PYMUPDF:
-                # PyMuPDF (fitz) - Meilleur pour les PDFs multi-colonnes
-                doc = fitz.open(pdf_path)
-                num_pages = len(doc) if not max_pages else min(len(doc), max_pages)
+            doc = fitz.open(pdf_path)
+            num_pages = len(doc) if not max_pages else min(len(doc), max_pages)
 
-                text_parts = []
-                for page_num in range(num_pages):
-                    try:
-                        page = doc[page_num]
+            # ── Pass 1 : détection des headers/footers répétitifs ────────────────
+            sample_size = min(num_pages, 40)
+            hf_count = {}
+            for pn in range(sample_size):
+                page = doc[pn]
+                h = page.rect.height
+                for block in page.get_text("blocks"):
+                    if block[6] != 0:
+                        continue
+                    _, y0, _, y1, text = block[:5]
+                    text = text.strip()
+                    if not text or len(text) > 120:
+                        continue
+                    norm = _re.sub(r'\d+', 'N', text).strip()
+                    if not norm:
+                        continue
+                    if y0 < h * 0.09 or y1 > h * 0.91:
+                        hf_count[norm] = hf_count.get(norm, 0) + 1
 
-                        # Utiliser get_text("blocks") pour mieux respecter la structure
-                        blocks = page.get_text("blocks")
+            repeated = {t for t, c in hf_count.items() if c / sample_size > 0.28}
 
-                        # Détecter si la page a 2 colonnes
-                        # Blocs texte uniquement
-                        text_blocks = [b for b in blocks if b[6] == 0 and b[4].strip()]
+            # ── Taille de police médiane pour détecter les titres de section ─────
+            font_sizes = []
+            for pn in range(min(10, num_pages)):
+                page = doc[pn]
+                try:
+                    for block in page.get_text("dict")["blocks"]:
+                        if block.get("type") == 0:
+                            for line in block.get("lines", []):
+                                for span in line.get("spans", []):
+                                    sz = span.get("size", 0)
+                                    if sz > 0:
+                                        font_sizes.append(sz)
+                except Exception:
+                    pass
 
-                        if not text_blocks:
-                            text_parts.append("")
-                            continue
-
-                        # Calculer la position X médiane pour détecter colonnes
-                        page_width = page.rect.width
-                        mid_x = page_width / 2
-
-                        # Séparer en colonnes gauche/droite
-                        left_blocks = [b for b in text_blocks if (b[0] + b[2]) / 2 < mid_x]
-                        right_blocks = [b for b in text_blocks if (b[0] + b[2]) / 2 >= mid_x]
-
-                        # Si les deux colonnes existent, traiter séparément
-                        if left_blocks and right_blocks:
-                            # Trier chaque colonne de haut en bas
-                            left_sorted = sorted(left_blocks, key=lambda b: b[1])
-                            right_sorted = sorted(right_blocks, key=lambda b: b[1])
-
-                            # Lire colonne gauche COMPLÈTE, puis colonne droite
-                            page_text = ""
-
-                            # Colonne gauche
-                            for block in left_sorted:
-                                text = block[4].strip()
-                                if text:
-                                    page_text += text + "\n"
-
-                            page_text += "\n--- COLONNE DROITE ---\n\n"
-
-                            # Colonne droite
-                            for block in right_sorted:
-                                text = block[4].strip()
-                                if text:
-                                    page_text += text + "\n"
-                        else:
-                            # Page simple colonne : tri normal
-                            sorted_blocks = sorted(text_blocks, key=lambda b: (b[1], b[0]))
-                            page_text = ""
-                            for block in sorted_blocks:
-                                text = block[4].strip()
-                                if text:
-                                    page_text += text + "\n"
-
-                        text_parts.append(page_text)
-                    except Exception as e:
-                        # Si une page pose problème, on continue avec les autres
-                        print(f"⚠️  Page {page_num + 1} ignorée (erreur: {str(e)[:50]})")
-                        # Essayer extraction simple en fallback
-                        try:
-                            page_text = page.get_text("text")
-                            text_parts.append(page_text)
-                        except:
-                            # Si même l'extraction simple échoue, on skip cette page
-                            text_parts.append(f"[Page {page_num + 1} non extractible]")
-
-                doc.close()
-                return "\n".join(text_parts)
-
-            elif USE_PDFPLUMBER:
-                with pdfplumber.open(pdf_path) as pdf:
-                    pages = pdf.pages[:max_pages] if max_pages else pdf.pages
-                    return "\n".join([p.extract_text() or "" for p in pages])
+            if font_sizes:
+                font_sizes.sort()
+                median_font = font_sizes[len(font_sizes) // 2]
             else:
-                import PyPDF2
-                with open(pdf_path, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    pages = reader.pages[:max_pages] if max_pages else reader.pages
-                    return "\n".join([p.extract_text() or "" for p in pages])
+                median_font = 11.0
+            title_threshold = median_font * 1.3
+
+            # ── Pass 2 : extraction filtrée page par page ─────────────────────────
+            pages_out = []
+            current_section = ""
+
+            for pn in range(num_pages):
+                try:
+                    page = doc[pn]
+                    h = page.rect.height
+                    page_width = page.rect.width
+                    mid_x = page_width / 2
+
+                    try:
+                        raw_blocks = page.get_text("dict")["blocks"]
+                    except Exception:
+                        raw_blocks = []
+
+                    # Construire (bbox, texte, police_max) pour chaque bloc texte
+                    text_blocks = []
+                    for block in raw_blocks:
+                        if block.get("type") != 0:
+                            continue
+                        bbox = block["bbox"]
+                        block_text = ""
+                        max_font = 0.0
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                block_text += span.get("text", "")
+                                max_font = max(max_font, span.get("size", 0))
+                            block_text += "\n"
+                        block_text = block_text.strip()
+                        if block_text:
+                            text_blocks.append((bbox, block_text, max_font))
+
+                    # Filtrer headers/footers
+                    filtered = []
+                    for bbox, text, font in text_blocks:
+                        _, y0, _, y1 = bbox
+                        if y0 < h * 0.09 or y1 > h * 0.91:
+                            norm = _re.sub(r'\d+', 'N', text).strip()
+                            if norm in repeated:
+                                continue
+                        filtered.append((bbox, text, font))
+
+                    if not filtered:
+                        pages_out.append({"page": pn + 1, "text": "", "section": current_section})
+                        continue
+
+                    # Détection 2 colonnes
+                    left_blocks = [(b, t, f) for b, t, f in filtered if (b[0] + b[2]) / 2 < mid_x]
+                    right_blocks = [(b, t, f) for b, t, f in filtered if (b[0] + b[2]) / 2 >= mid_x]
+
+                    if left_blocks and right_blocks:
+                        columns = [
+                            sorted(left_blocks, key=lambda x: x[0][1]),
+                            sorted(right_blocks, key=lambda x: x[0][1]),
+                        ]
+                    else:
+                        columns = [sorted(filtered, key=lambda x: x[0][1])]
+
+                    page_text = ""
+                    for col_idx, col_blocks in enumerate(columns):
+                        if col_idx > 0:
+                            page_text += "\n"
+                        for bbox, text, font in col_blocks:
+                            if font >= title_threshold and len(text) < 100:
+                                current_section = text.strip()
+                                page_text += "\n## " + text.strip() + "\n"
+                            else:
+                                page_text += text + "\n"
+
+                    pages_out.append({"page": pn + 1, "text": page_text.strip(), "section": current_section})
+
+                except Exception as e:
+                    print(f"⚠️  Page {pn + 1} ignorée (erreur: {str(e)[:60]})")
+                    try:
+                        fallback_text = doc[pn].get_text("text")
+                        pages_out.append({"page": pn + 1, "text": fallback_text, "section": current_section})
+                    except Exception:
+                        pages_out.append({"page": pn + 1, "text": "", "section": current_section})
+
+            doc.close()
+            return pages_out
+
         except Exception as e:
-            return f"[Erreur extraction PDF: {e}]"
+            return [{"page": 1, "text": f"[Erreur extraction PDF: {e}]", "section": ""}]
     
     @staticmethod
     def extract_from_text(file_path: Path) -> str:
@@ -367,9 +435,11 @@ class DocumentExtractor:
 
                 suffix = file_path.suffix.lower()
                 if suffix == ".pdf":
-                    content = DocumentExtractor.extract_from_pdf(file_path, max_pages)
+                    pages_data = DocumentExtractor.extract_from_pdf(file_path, max_pages)
+                    content = "\n".join(p["text"] for p in pages_data if p["text"])
                 else:
                     content = DocumentExtractor.extract_from_text(file_path)
+                    pages_data = None
 
                 # Déterminer la catégorie basée sur le chemin
                 relative_path = file_path.relative_to(directory)
@@ -393,7 +463,8 @@ class DocumentExtractor:
                 documents[file_path.name] = {
                     "content": content,
                     "category": category,
-                    "path": str(relative_path)
+                    "path": str(relative_path),
+                    "pages": pages_data,
                 }
                 print(f"   ✅ {len(content)} caractères extraits (catégorie: {category})")
 
@@ -478,28 +549,57 @@ class VectorStore:
                 content = doc_data["content"]
                 category = doc_data["category"]
                 path = doc_data["path"]
+                pages_data = doc_data.get("pages")
 
                 try:
-                    doc_chunks = splitter.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
+                    if pages_data:
+                        # Chunking par page : préserve le numéro de page dans les métadonnées
+                        for page_info in pages_data:
+                            page_text = page_info["text"].strip()
+                            if not page_text:
+                                continue
+                            try:
+                                page_chunks = splitter.split_text(page_text)
+                            except Exception:
+                                page_chunks = RecursiveCharacterTextSplitter(
+                                    chunk_size=self.chunk_size,
+                                    chunk_overlap=self.chunk_overlap
+                                ).split_text(page_text)
+                            for chunk in page_chunks:
+                                all_chunks.append(Document(
+                                    page_content=chunk,
+                                    metadata={
+                                        "source": name,
+                                        "category": category,
+                                        "path": path,
+                                        "page": page_info["page"],
+                                        "section": page_info["section"],
+                                    }
+                                ))
+                    else:
+                        # Fichiers non-PDF : comportement original sans métadonnée de page
+                        doc_chunks = splitter.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
+                        for chunk in doc_chunks:
+                            all_chunks.append(Document(
+                                page_content=chunk,
+                                metadata={
+                                    "source": name,
+                                    "category": category,
+                                    "path": path,
+                                    "page": None,
+                                    "section": "",
+                                }
+                            ))
                 except Exception:
-                    # Fallback par document si le sémantique échoue sur ce doc
                     fallback = RecursiveCharacterTextSplitter(
                         chunk_size=self.chunk_size,
                         chunk_overlap=self.chunk_overlap
                     )
-                    doc_chunks = fallback.split_text(f"--- DOCUMENT: {name} ---\n\n{content}")
-
-                for chunk in doc_chunks:
-                    all_chunks.append(
-                        Document(
+                    for chunk in fallback.split_text(f"--- DOCUMENT: {name} ---\n\n{content}"):
+                        all_chunks.append(Document(
                             page_content=chunk,
-                            metadata={
-                                "source": name,
-                                "category": category,
-                                "path": path
-                            }
-                        )
-                    )
+                            metadata={"source": name, "category": category, "path": path}
+                        ))
 
             chunk_type = "sémantiques" if use_semantic else "fixes"
             print(f"✅ {len(all_chunks)} chunks {chunk_type} créés avec métadonnées")
@@ -808,6 +908,8 @@ Question : {{question}}
 5. Cite directement et complètement le texte pertinent
 6. Respecte impérativement le format demandé ci-dessus
 7. Si aucun chunk ne contient de définition/règle, dis-le clairement
+8. Cite tes sources avec (Réf.X) après chaque information issue des documents.
+   Exemple : "Le score de Courage est de 3 par défaut (Réf.1)."
 
 Ta réponse :"""
             return PromptTemplate(
