@@ -612,6 +612,40 @@ class VectorStore:
                             metadata={"source": name, "category": category, "path": path}
                         ))
 
+            # ── Enrichissement VD → titre d'arcane ───────────────────────────────
+            # Les pages avec titres en police décorative (image) perdent leur titre lors
+            # de l'extraction. On reconstruit le titre à partir de la valeur VD unique.
+            # 1. Construire le lookup VD→arcane_name depuis les chunks qui ont les deux
+            import re as _re_vd
+            _vd_to_arcane: Dict[str, str] = {}
+            for _ch in all_chunks:
+                if '#' in _ch.page_content[:300]:
+                    _tm = _re_vd.search(r'##\s+(.+?)(?:\n|$)', _ch.page_content)
+                    _vm = _re_vd.search(r'VD\s*[:\s]+([^\n]+)', _ch.page_content)
+                    if _tm and _vm:
+                        _arcane_key = _vm.group(1).strip().lower().split()[0]  # premier mot du VD
+                        if _arcane_key and _arcane_key not in _vd_to_arcane:
+                            _vd_to_arcane[_arcane_key] = _tm.group(1).strip()
+
+            # 2. Enrichir les chunks corps (VD+M présents, pas de ## dans les 200 premiers chars)
+            _enriched: List[Document] = []
+            for _ch in all_chunks:
+                _ct = _ch.page_content
+                if ('VD' in _ct and 'M :' in _ct and
+                        not _re_vd.search(r'##', _ct[:200])):
+                    _vm = _re_vd.search(r'VD\s*[:\s]+([^\n]+)', _ct)
+                    if _vm:
+                        _vd_key = _vm.group(1).strip().lower().split()[0]
+                        _arcane_name = _vd_to_arcane.get(_vd_key)
+                        if _arcane_name:
+                            _ch = Document(
+                                page_content=f"## {_arcane_name}\n{_ct}",
+                                metadata=_ch.metadata
+                            )
+                            print(f"  ✨ Enrichi : p.{_ch.metadata.get('page','?')} → ## {_arcane_name}")
+                _enriched.append(_ch)
+            all_chunks = _enriched
+
             chunk_type = "sémantiques" if use_semantic else "fixes"
             print(f"✅ {len(all_chunks)} chunks {chunk_type} créés avec métadonnées")
             if progress_callback:

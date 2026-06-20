@@ -488,9 +488,20 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         # Récupérer les chunks (k_fetch docs)
         source_docs = retriever.invoke(query)
 
+        # Filtrer par catégorie APRÈS retrieval (le BM25 n'a pas de filtre natif)
+        if mode == "Encyclopédique":
+            _sf = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
+            if _sf == "rules_only":
+                _allowed = {"rules", "unknown"}
+            elif _sf == "universe_only":
+                _allowed = {"universe_book", "novel"}
+            else:
+                _allowed = {"rules", "universe_book", "unknown"}
+            source_docs = [d for d in source_docs if d.metadata.get('category', 'unknown') in _allowed]
+
         # DIAGNOSTIC : afficher tous les chunks initiaux
         if mode == "Encyclopédique":
-            print(f"\n📋 DIAGNOSTIC — {len(source_docs)} chunks initiaux :")
+            print(f"\n📋 DIAGNOSTIC — {len(source_docs)} chunks initiaux (après filtre catégorie) :")
             for _di, _dd in enumerate(source_docs, 1):
                 _dp = _dd.metadata.get('page', '?')
                 _ds = _dd.metadata.get('source', '?')
@@ -586,6 +597,17 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                         "path": doc.metadata.get('path', ''),
                         "section": doc.metadata.get('section', ''),
                     })
+            # Si la query a été augmentée (hit direct injecté dans la question),
+            # le modèle n'a pas pu citer (Réf.X) → ajouter automatiquement le hit direct
+            if not cited_sources and _query_to_use != query and source_docs:
+                doc = source_docs[0]
+                cited_sources.append({
+                    "ref": 1,
+                    "page": doc.metadata.get('page', '?'),
+                    "source": doc.metadata.get('source', '?'),
+                    "path": doc.metadata.get('path', ''),
+                    "section": doc.metadata.get('section', ''),
+                })
 
         # Debug
         print(f"📝 Réponse : {len(response_text)} chars | Confiance : {confidence:.0%} | Sources : {len(source_docs)}")
