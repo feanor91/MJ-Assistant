@@ -1113,7 +1113,7 @@ def main():
                         st.caption(" · ".join(_caption_parts))
 
                     # Sources citées (mode encyclopédique uniquement)
-                    if mode == "Encyclopédique" and result.get('cited_sources'):
+                    if st.session_state.mode == "Encyclopédique" and result.get('cited_sources'):
                         st.markdown("**📚 Sources :**")
                         _msg_count = st.session_state.get('message_count', 0)
                         _btn_cols = st.columns(min(len(result['cited_sources']), 5))
