@@ -553,11 +553,22 @@ class VectorStore:
 
                 try:
                     if pages_data:
-                        # Chunking par page : préserve le numéro de page dans les métadonnées
-                        for page_info in pages_data:
+                        # Chunking par page avec chevauchement inter-pages
+                        # Ajoute les derniers CROSSPAGE_OVERLAP chars de la page précédente
+                        # pour capturer les définitions qui chevauchent deux pages (ex: titre page N, corps page N+1)
+                        CROSSPAGE_OVERLAP = 400
+                        for i, page_info in enumerate(pages_data):
                             page_text = page_info["text"].strip()
                             if not page_text:
                                 continue
+
+                            # Prépend la fin de la page précédente si elle n'est pas vide
+                            if i > 0:
+                                prev_text = pages_data[i - 1]["text"].strip()
+                                if prev_text and len(prev_text) > 50:
+                                    tail = prev_text[-CROSSPAGE_OVERLAP:]
+                                    page_text = tail + "\n\n" + page_text
+
                             try:
                                 page_chunks = splitter.split_text(page_text)
                             except Exception:
@@ -776,7 +787,14 @@ class RAGChain:
             # Retourner les k meilleurs
             reranked = [doc for doc, score in scored_docs[:k]]
 
-            print(f"🎯 Re-ranking : {len(documents)} → {len(reranked)} chunks (scores: {scores[:3].tolist() if len(scores) > 0 else []}...)")
+            _reranked_ids = set(id(d) for d in reranked)
+            print(f"\n🎯 Re-ranking — scores de tous les chunks :")
+            for _rdoc, _rscore in scored_docs:
+                _rp = _rdoc.metadata.get('page', '?')
+                _rs = _rdoc.metadata.get('source', '?')
+                _rc = _rdoc.page_content[:80].replace('\n', ' ')
+                _kept = "✅ GARDÉ" if id(_rdoc) in _reranked_ids else "❌ éliminé"
+                print(f"  {_kept} score={_rscore:.3f} p.{_rp} ({_rs}): {_rc}...")
 
             return reranked
         except Exception as e:

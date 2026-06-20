@@ -488,6 +488,15 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         # Récupérer les chunks (k_fetch docs)
         source_docs = retriever.invoke(query)
 
+        # DIAGNOSTIC : afficher tous les chunks initiaux
+        if mode == "Encyclopédique":
+            print(f"\n📋 DIAGNOSTIC — {len(source_docs)} chunks initiaux :")
+            for _di, _dd in enumerate(source_docs, 1):
+                _dp = _dd.metadata.get('page', '?')
+                _ds = _dd.metadata.get('source', '?')
+                _dc = _dd.page_content[:100].replace('\n', ' ')
+                print(f"  [{_di:02d}] p.{_dp} ({_ds}): {_dc}...")
+
         # Phase 2 : re-ranker → réduire à k_value pour le LLM
         if mode == "Encyclopédique" and len(source_docs) > k_value:
             if rag_chain and rag_chain.reranker:
