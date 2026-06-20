@@ -812,18 +812,29 @@ class RAGChain:
                     top_p=top_p,
                     num_ctx=num_ctx,
                     num_predict=num_predict,
-                    repeat_penalty=1.15,
+                    repeat_penalty=1.3,
                     **extra
                 )
             except TypeError:
-                # think= ou repeat_penalty non supporté dans cette version
-                return ChatOllama(
-                    model=model_name,
-                    temperature=temperature,
-                    top_p=top_p,
-                    num_ctx=num_ctx,
-                    num_predict=num_predict
-                )
+                try:
+                    # think= non supporté — réessayer sans
+                    return ChatOllama(
+                        model=model_name,
+                        temperature=temperature,
+                        top_p=top_p,
+                        num_ctx=num_ctx,
+                        num_predict=num_predict,
+                        repeat_penalty=1.3,
+                    )
+                except TypeError:
+                    # repeat_penalty non supporté non plus
+                    return ChatOllama(
+                        model=model_name,
+                        temperature=temperature,
+                        top_p=top_p,
+                        num_ctx=num_ctx,
+                        num_predict=num_predict,
+                    )
         except TypeError:
             # Fallback si certains paramètres ne sont pas supportés
             try:
@@ -911,6 +922,8 @@ Question : {{question}}
 7. Si aucun chunk ne contient de définition/règle, dis-le clairement
 8. Cite tes sources avec (Réf.X) après chaque information issue des documents.
    Exemple : "Le score de Courage est de 3 par défaut (Réf.1)."
+9. STOP dès que tu as répondu à la question. Ne répète JAMAIS une information déjà énoncée.
+   Chaque fait doit apparaître UNE SEULE FOIS dans ta réponse.
 
 Ta réponse :"""
             return PromptTemplate(
