@@ -553,21 +553,27 @@ class VectorStore:
 
                 try:
                     if pages_data:
-                        # Chunking par page avec chevauchement inter-pages
-                        # Ajoute les derniers CROSSPAGE_OVERLAP chars de la page précédente
-                        # pour capturer les définitions qui chevauchent deux pages (ex: titre page N, corps page N+1)
-                        CROSSPAGE_OVERLAP = 400
+                        # Chunking par page — portage de l'en-tête de section vers les pages suivantes.
+                        # Quand une section (## Titre) commence sur la page N et continue sur N+1, N+2…,
+                        # on préfixe les pages de continuation avec "## Titre [suite]" pour que le
+                        # re-ranker les associe au bon sujet sans contaminer les autres sections.
+                        import re as _re_chunk
+                        _last_header = ""
                         for i, page_info in enumerate(pages_data):
                             page_text = page_info["text"].strip()
                             if not page_text:
                                 continue
 
-                            # Prépend la fin de la page précédente si elle n'est pas vide
-                            if i > 0:
-                                prev_text = pages_data[i - 1]["text"].strip()
-                                if prev_text and len(prev_text) > 50:
-                                    tail = prev_text[-CROSSPAGE_OVERLAP:]
-                                    page_text = tail + "\n\n" + page_text
+                            # Si la page ne démarre pas par un en-tête ## et qu'on a un contexte actif,
+                            # préfixer avec cet en-tête pour aider le retriever/re-ranker
+                            _page_has_header = bool(_re_chunk.match(r'\s*##', page_text))
+                            if not _page_has_header and _last_header:
+                                page_text = f"{_last_header} (suite)\n{page_text}"
+
+                            # Mettre à jour l'en-tête actif avec le dernier ## trouvé sur cette page
+                            _headers_on_page = _re_chunk.findall(r'^##[^\n]+', page_text, _re_chunk.MULTILINE)
+                            if _headers_on_page:
+                                _last_header = _headers_on_page[-1].strip()
 
                             try:
                                 page_chunks = splitter.split_text(page_text)
@@ -620,26 +626,40 @@ class VectorStore:
             _vd_to_arcane: Dict[str, str] = {}
             for _ch in all_chunks:
                 if '#' in _ch.page_content[:300]:
-                    _tm = _re_vd.search(r'##\s+(.+?)(?:\n|$)', _ch.page_content)
+                    # Prendre la ligne de titre ## mais la stopper avant le texte descriptif
+                    # (empêche la capture de toute la ligne quand il n'y a pas de \n après le titre)
+                    _tm_raw = _re_vd.search(r'##\s+(.+)', _ch.page_content)
                     _vm = _re_vd.search(r'VD\s*[:\s]+([^\n]+)', _ch.page_content)
-                    if _tm and _vm:
-                        _arcane_key = _vm.group(1).strip().lower().split()[0]  # premier mot du VD
-                        if _arcane_key and _arcane_key not in _vd_to_arcane:
-                            _vd_to_arcane[_arcane_key] = _tm.group(1).strip()
+                    if _tm_raw and _vm:
+                        _raw_title = _tm_raw.group(1)
+                        # Tronquer avant les mots qui indiquent le début de la description
+                        _stop = _re_vd.search(
+                            r'\b(Symbole|Dans |Chez |Cette |Cet |Les |La |Il |Elle |C\'est|Représente|'
+                            r'Personnage|Incarnation|Archétype)',
+                            _raw_title, _re_vd.IGNORECASE
+                        )
+                        if _stop and _stop.start() > 3:
+                            _raw_title = _raw_title[:_stop.start()].strip()
+                        _raw_title = _raw_title[:80].strip()  # sécurité : max 80 chars
+                        if _raw_title and len(_raw_title) >= 3:
+                            _arcane_key = _vm.group(1).strip().lower().split()[0]
+                            if _arcane_key and _arcane_key not in _vd_to_arcane:
+                                _vd_to_arcane[_arcane_key] = _raw_title
+            print(f"  📖 Lookup VD→arcane : {len(_vd_to_arcane)} entrées — {list(_vd_to_arcane.items())[:5]}")
 
             # 2. Enrichir les chunks corps (VD+M présents, nom d'arcane absent/garbled)
             # Attrape aussi les titres en police décorative dont l'encodage est garbled
             _enriched: List[Document] = []
             for _ch in all_chunks:
                 _ct = _ch.page_content
-                if 'VD' in _ct and ('M :' in _ct or 'M:' in _ct):
+                _has_vd = 'VD' in _ct
+                _has_m = ('M :' in _ct or 'M:' in _ct)
+                if _has_vd and _has_m:
                     _vm = _re_vd.search(r'VD\s*[:\s]+([^\n]+)', _ct)
                     if _vm:
                         _vd_key = _vm.group(1).strip().lower().split()[0]
                         _arcane_name = _vd_to_arcane.get(_vd_key)
                         if _arcane_name:
-                            # Vérifier si les mots significatifs du nom d'arcane
-                            # sont présents dans les 200 premiers chars (titre déjà là)
                             _sig_words = [w.lower() for w in _arcane_name.split() if len(w) >= 5]
                             _first200 = _ct[:200].lower()
                             _title_present = all(w in _first200 for w in _sig_words)
@@ -649,6 +669,16 @@ class VectorStore:
                                     metadata=_ch.metadata
                                 )
                                 print(f"  ✨ Enrichi : p.{_ch.metadata.get('page','?')} → ## {_arcane_name}")
+                            else:
+                                print(f"  ⏩ Déjà titré : p.{_ch.metadata.get('page','?')} ({_arcane_name})")
+                        else:
+                            _pg = _ch.metadata.get('page', '?')
+                            print(f"  ⚠️ VD+M trouvés p.{_pg} mais clé '{_vd_key}' absente du lookup")
+                            print(f"     Début du chunk : {_ct[:150].replace(chr(10),' ')!r}")
+                elif _has_vd and not _has_m:
+                    _pg = _ch.metadata.get('page', '?')
+                    _vd_ctx = _ct[_ct.find('VD'):_ct.find('VD')+60] if 'VD' in _ct else ''
+                    print(f"  ℹ️ VD sans M: p.{_pg} — {_vd_ctx.replace(chr(10),' ')!r}")
                 _enriched.append(_ch)
             all_chunks = _enriched
 
@@ -905,7 +935,7 @@ class RAGChain:
     
     def create_prompt(self, mode: str, system_prompt: str = "", memory: str = "", short_memory: str = "", level: str = "N/A") -> PromptTemplate:
         """Crée le prompt selon le mode avec les données déjà intégrées"""
-        _level_instructions = {
+        _level_instructions_mj = {
             "Résumé court": (
                 "LONGUEUR : 2 à 3 paragraphes courts et percutants. Va à l'essentiel."
             ),
@@ -920,7 +950,30 @@ class RAGChain:
                 "donner vie à chaque détail. Ne résume pas — décris, montre, fais ressentir."
             ),
         }
-        level_instruction = _level_instructions.get(level, _level_instructions["Scène détaillée"])
+        _level_instructions_encyclo = {
+            "Points clés": (
+                "FORMAT : bullet points (•), 5 à 8 maximum. "
+                "Chaque point = une donnée exacte copiée du contexte + (Réf.X)."
+            ),
+            "Explication complète": (
+                "FORMAT : 3 à 5 paragraphes structurés avec titres ##. "
+                "Reproduis les données exactes du contexte : valeurs, règles, exemples. "
+                "Cite (Réf.X) après chaque paragraphe."
+            ),
+            "Détail exhaustif": (
+                "FORMAT : TRANSCRIPTION INTÉGRALE. Reproduis mot pour mot TOUT le contenu pertinent du contexte. "
+                "Structure avec des titres ## et ###. "
+                "Pour un arcane : copie chaque champ (VD, M, C, MD) avec sa valeur exacte, "
+                "copie chaque sortilège avec son nom en gras et sa description complète, "
+                "copie chaque rituel avec Puissance, coûts en PE et description, copie les Modalités. "
+                "Pour des règles : copie chaque étape, chaque valeur numérique, chaque exemple du contexte. "
+                "INTERDIT : paraphraser, résumer, omettre des champs présents dans le contexte."
+            ),
+        }
+        if mode == "mj":
+            level_instruction = _level_instructions_mj.get(level, _level_instructions_mj["Scène détaillée"])
+        else:
+            level_instruction = _level_instructions_encyclo.get(level, _level_instructions_encyclo["Explication complète"])
 
         if mode == "mj":
             template = f"""
@@ -959,16 +1012,14 @@ Ta réponse :"""
             template = f"""
 {system_prompt}
 
-Mémoire des derniers échanges :
 {short_memory}
 
-🔴 INSTRUCTION PRIORITAIRE — LIS CECI AVANT TOUT :
-Si le contexte ci-dessous contient une section "RÉPONSE DIRECTE", son contenu EST la réponse exacte.
-→ Copie ce contenu textuellement dans ta réponse et cite avec (Réf.X).
-→ Une définition courte avec nom + VD (Valeur Dramatique) est une définition COMPLÈTE.
-→ NE DIS JAMAIS "il n'y a pas de définition" si cette section est présente.
+Tu es un outil de TRANSCRIPTION documentaire, pas de résumé.
+Ta seule tâche : extraire et reproduire les informations du CONTEXTE ci-dessous.
+NE PARAPHRASE PAS. NE RÉSUME PAS. NE RÉINTERPRÈTE PAS.
+N'utilise JAMAIS tes connaissances d'entraînement — uniquement le texte du contexte.
 
-===== CONTEXTE (extraits des documents) =====
+===== CONTEXTE =====
 {{context}}
 ===== FIN DU CONTEXTE =====
 
@@ -976,12 +1027,11 @@ Question : {{question}}
 
 {level_instruction}
 
-⚠️ INSTRUCTIONS :
-1. Si le contexte contient une section "RÉPONSE DIRECTE" → commence par citer son contenu avec (Réf.X)
-2. Ignore les passages purement narratifs (scénarios, histoires sans règles)
-3. Cite chaque information avec (Réf.X) après elle
-4. STOP dès que tu as répondu. Ne répète JAMAIS une information déjà énoncée.
-5. Si AUCUN chunk ne contient le sujet demandé, dis-le clairement
+RÈGLES STRICTES :
+- Chaque fait que tu énonces DOIT venir mot pour mot du contexte ci-dessus
+- Cite (Réf.X) après chaque information
+- N'invente aucune référence, source ou donnée absente du contexte
+- Si le sujet n'est pas dans le contexte, dis-le en une phrase
 
 Ta réponse :"""
             return PromptTemplate(

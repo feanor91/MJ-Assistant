@@ -62,9 +62,21 @@ def load_system_prompt():
     prompt_path = Path("system_prompt.txt")
     if not prompt_path.exists():
         return ""
-    
     with open(prompt_path, 'r', encoding='utf-8') as f:
         return f.read()
+
+
+def load_prompt(config: dict, key: str) -> str:
+    """Charge un prompt depuis prompts/<file> ; fallback sur config.yaml si absent."""
+    prompts_cfg = config.get('prompts', {})
+    file_key = key + '_file'
+    filename = prompts_cfg.get(file_key)
+    if filename:
+        prompts_dir = Path(prompts_cfg.get('prompts_dir', 'prompts'))
+        prompt_path = prompts_dir / filename
+        if prompt_path.exists():
+            return prompt_path.read_text(encoding='utf-8')
+    return prompts_cfg.get(key, '')
 
 
 def init_session_state(config):
@@ -370,11 +382,114 @@ def get_qa_chain(config, vectordb, model, mode, temp, top_p, k, show_sources, sy
     return qa_chain, rag_chain
 
 
+# Cache module-level du glossaire (chargé une seule fois)
+_GLOSSARY_CACHE: dict = {}
+_GLOSSARY_LOADED: bool = False
+
+
+def _load_glossary() -> dict:
+    """Charge prompts/glossary.json au premier appel, puis retourne le cache."""
+    global _GLOSSARY_CACHE, _GLOSSARY_LOADED
+    if not _GLOSSARY_LOADED:
+        _GLOSSARY_LOADED = True
+        glossary_path = Path("prompts/glossary.json")
+        if glossary_path.exists():
+            try:
+                import json as _json
+                data = _json.loads(glossary_path.read_text(encoding="utf-8"))
+                _GLOSSARY_CACHE = data.get("mappings", {})
+                print(f"📖 Glossaire chargé : {len(_GLOSSARY_CACHE)} termes ({glossary_path})")
+            except Exception as _e:
+                print(f"⚠️ Glossaire non chargeable : {_e}")
+        else:
+            print("ℹ️ Aucun glossaire trouvé (lance tools/build_glossary.py pour en créer un)")
+    return _GLOSSARY_CACHE
+
+
+def _expand_query_with_glossary(query: str) -> str:
+    """Expansion instantanée via glossaire JSON (zéro latence LLM).
+
+    Pour chaque terme officiel du glossaire, vérifie si un de ses synonymes
+    apparaît dans la query. Si oui, ajoute le terme officiel à la query
+    pour que BM25 et le vectoriel le trouvent.
+    """
+    glossary = _load_glossary()
+    if not glossary:
+        return query
+
+    query_lower = query.lower()
+    added: list = []
+
+    for official_term, synonyms in glossary.items():
+        # Ignorer si le terme officiel est déjà dans la query
+        if official_term.lower() in query_lower:
+            continue
+        for synonym in (synonyms or []):
+            if synonym.lower() in query_lower:
+                added.append(official_term)
+                break  # un synonyme suffit pour déclencher ce terme
+
+    if added:
+        expanded = f"{query} {' '.join(added)}"
+        print(f"🔄 Query expansion (glossaire) : ajout de {added}")
+        return expanded
+    return query
+
+
+def _expand_query_with_llm(query: str, model_name: str) -> str:
+    """Expansion LLM en fallback quand le glossaire ne trouve rien.
+
+    Appel rapide (num_predict=100) qui reformule la query avec la terminologie
+    officielle du jeu, puis concatène avec l'originale pour couvrir les deux
+    vocabulaires dans BM25.
+    """
+    try:
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        llm = ChatOllama(model=model_name, temperature=0.0, num_predict=100)
+        messages = [
+            SystemMessage(content=(
+                "Tu es expert du jeu de rôle 'Les Lames du Cardinal'. "
+                "Reformule la question en utilisant les termes EXACTS du jeu. "
+                "Exemples : 'combat' → 'affrontement Opposition Dramatique assaut', "
+                "'magie' → 'Tarot des Ombres arcane sortilège', "
+                "'points de vie' → 'Blessures Séquelles', "
+                "'dégâts' → 'blessures conséquences'. "
+                "Réponds UNIQUEMENT avec la question reformulée, sans explication."
+            )),
+            HumanMessage(content=query)
+        ]
+        result = llm.invoke(messages)
+        rewritten = (result.content or "").strip()
+        if rewritten and rewritten.lower() != query.lower():
+            print(f"🔄 Query expansion (LLM fallback) : '{rewritten[:80]}'")
+            return f"{query} {rewritten}"
+    except Exception as _e:
+        print(f"⚠️ LLM query expansion failed : {_e}")
+    return query
+
+
+def _expand_query(query: str, model_name: str) -> str:
+    """Expande la query pour le retrieval RAG.
+
+    Stratégie : glossaire d'abord (instantané), LLM en fallback si rien trouvé.
+    Retourne toujours au moins la query originale.
+    """
+    # Étape 1 : glossaire JSON (zéro latence)
+    expanded = _expand_query_with_glossary(query)
+    if expanded != query:
+        return expanded
+
+    # Étape 2 : LLM fallback (~1-2s, uniquement si le glossaire n'a rien trouvé)
+    return _expand_query_with_llm(query, model_name)
+
+
 def process_query(query: str, config, mode: str, level: str, vectordb):
     """Traite une requête utilisateur"""
     try:
         # Prompt système
-        system_prompt = config['prompts']['mj_system' if mode == "MJ immersif" else 'encyclo_system']
+        system_prompt = load_prompt(config, 'mj_system' if mode == "MJ immersif" else 'encyclo_system')
 
         # Préparer la mémoire selon le mode
         if mode == "MJ immersif":
@@ -398,6 +513,75 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
             # Température à 0 pour éviter les hallucinations et forcer la fidélité au contexte
             temp_value = 0.0
 
+        # ── Mode MJ immersif : chemin direct sans RAG ──────────────────────────
+        if mode == "MJ immersif":
+            from langchain_ollama import ChatOllama
+            from langchain_core.messages import SystemMessage, HumanMessage
+
+            model_name = st.session_state.current_model
+            num_ctx = config['model'].get('num_ctx', 32768)
+            num_predict = config['model'].get('num_predict', 2048)
+            llm = ChatOllama(
+                model=model_name,
+                temperature=temp_value,
+                top_p=st.session_state.top_p,
+                num_ctx=num_ctx,
+                num_predict=num_predict,
+            )
+
+            messages = [SystemMessage(content=system_prompt)]
+            if memory_text.strip():
+                messages.append(SystemMessage(content=f"Historique récent :\n{memory_text}"))
+            messages.append(HumanMessage(content=query))
+
+            import time as _time
+            import re as _re
+            _t0 = _time.time()
+            result = llm.invoke(messages)
+            _elapsed = _time.time() - _t0
+
+            _meta = getattr(result, 'response_metadata', {}) or {}
+            response_text = result.content if hasattr(result, 'content') else str(result)
+
+            if '<think>' in response_text:
+                after_think = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
+                response_text = after_think if after_think else response_text
+
+            result_obj = {
+                "response": response_text,
+                "sources": [],
+                "confidence": 1.0,
+                "elapsed": _elapsed,
+                "tokens_in": _meta.get('prompt_eval_count', 0),
+                "tokens_out": _meta.get('eval_count', 0),
+                "cited_sources": [],
+            }
+
+            memory.add(query, response_text)
+
+            from datetime import datetime
+            from core.parser import ResponseParser
+            parsed = ResponseParser.parse(response_text)
+            st.session_state.game_state.update_from_parsed(parsed)
+            st.session_state.timeline.append({
+                "query": query,
+                "response": response_text,
+                "timestamp": datetime.now().isoformat(),
+                "mode": mode,
+            })
+            if hasattr(st.session_state, 'statistics'):
+                st.session_state.statistics.record_query(success=True)
+            st.session_state.message_count += 1
+            if st.session_state.message_count % st.session_state.auto_save_interval == 0:
+                st.session_state.session_manager.save_session(
+                    session_name="auto_save",
+                    mj_memory=st.session_state.mj_memory,
+                    encyclo_memory=st.session_state.encyclo_memory,
+                    metadata={"auto_save": True}
+                )
+            return result_obj
+
+        # ── Mode Encyclopédique : chemin RAG ───────────────────────────────────
         # Récupérer le filtre de source pour le mode encyclopédique
         source_filter = st.session_state.get('encyclo_source_filter', 'rules_and_universe')
 
@@ -431,13 +615,14 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
 
         # En mode encyclopédique : format context avec marqueurs de référence
         # Limite à 1200 chars par chunk pour éviter de saturer le contexte LLM
-        _CHUNK_MAX_CHARS = 1200
+        _CHUNK_MAX_CHARS = 3000
         if mode == "Encyclopédique":
             # Extraire les mots-clés significatifs de la query pour détecter les correspondances
             import re as _re2
             _query_words = set(w.lower() for w in _re2.findall(r'\w{4,}', query))
 
             def format_context(docs):
+                import re as _re_fc
                 direct_hits = []
                 parts = []
                 for i, doc in enumerate(docs, 1):
@@ -449,7 +634,7 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                         content = content[:_CHUNK_MAX_CHARS] + "…"
 
                     # Détecte si ce chunk contient directement le sujet demandé
-                    _content_words = set(w.lower() for w in _re2.findall(r'\w{4,}', content))
+                    _content_words = set(w.lower() for w in _re_fc.findall(r'\w{4,}', content))
                     _overlap = len(_query_words & _content_words)
                     # Cherche si un mot-clé apparaît dans une ligne de titre (## ...)
                     _title_line = next((ln for ln in content.split('\n') if ln.strip().startswith('#')), '')
@@ -457,7 +642,30 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                     _is_direct = _has_title or _overlap >= max(2, len(_query_words) * 0.4)
 
                     if _is_direct:
+                        # Si le chunk contient plusieurs arcanes (## N ...), extraire seulement la section pertinente
+                        _all_headings = list(_re_fc.finditer(r'## \d+\s+\w', content))
+                        if len(_all_headings) > 1:
+                            for _mh in _all_headings:
+                                _h_text = content[_mh.start():_mh.start()+120].lower()
+                                if any(w in _h_text for w in _query_words):
+                                    _sec_start = _mh.start()
+                                    _next_h = _re_fc.search(r'## \d+\s+\w', content[_sec_start + 1:])
+                                    _sec_end = _sec_start + 1 + _next_h.start() if _next_h else len(content)
+                                    content = content[_sec_start:_sec_end].rstrip()
+                                    print(f"  📌 Chunk {i} (p.{page}) multi-arcane : section extraite")
+                                    break
                         direct_hits.append((i, source, page, content))
+                    elif direct_hits:
+                        # Si on a déjà un hit direct, tronquer ce chunk quand il démarre
+                        # un nouvel arcane (## N …) dont les mots-clés ne matchent pas la requête.
+                        # Pas de \n requis avant ## : le chunk p.245 a ". ## 1 La Tisserande" sans \n
+                        _new_arcane = _re_fc.search(r'## \d+\s+\w', content)
+                        if _new_arcane:
+                            _ha_start = _new_arcane.start()
+                            heading_text = content[_ha_start:_ha_start + 120].lower()
+                            if not any(w in heading_text for w in _query_words):
+                                content = content[:_ha_start].rstrip()
+                                print(f"  ✂️ Chunk {i} tronqué à l'arcane suivant (p.{page})")
 
                     ref_header = f"[Réf. {i} — {source}, p.{page}]"
                     if section:
@@ -475,18 +683,27 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                 result += "\n\n---\n\n".join(parts)
                 return result
 
+        # ── Query expansion : adapte le vocabulaire utilisateur aux termes du jeu ──
+        # Ex: "système de combat" → "système de combat Oppositions dramatiques affrontements..."
+        # Automatique, sans maintenance manuelle. Utilisé uniquement pour le retrieval.
+        _qe_enabled = config.get('rag', {}).get('enable_query_expansion', True)
+        if mode == "Encyclopédique" and _qe_enabled:
+            _retrieval_query = _expand_query(query, st.session_state.current_model)
+        else:
+            _retrieval_query = query
+
         # Score de pertinence réel via Chroma (0=hors-sujet, 1=parfait)
         confidence = 0.0
         try:
-            scored_docs = vectordb.similarity_search_with_relevance_scores(query, k=5)
+            scored_docs = vectordb.similarity_search_with_relevance_scores(_retrieval_query, k=5)
             if scored_docs:
                 confidence = sum(s for _, s in scored_docs) / len(scored_docs)
                 print(f"📊 Scores de pertinence : {[round(s,2) for _,s in scored_docs[:3]]}")
         except Exception:
             pass
 
-        # Récupérer les chunks (k_fetch docs)
-        source_docs = retriever.invoke(query)
+        # Récupérer les chunks (k_fetch docs) — avec requête étendue
+        source_docs = retriever.invoke(_retrieval_query)
 
         # Filtrer par catégorie APRÈS retrieval (le BM25 n'a pas de filtre natif)
         if mode == "Encyclopédique":
@@ -501,12 +718,13 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
 
         # DIAGNOSTIC : afficher tous les chunks initiaux
         if mode == "Encyclopédique":
-            print(f"\n📋 DIAGNOSTIC — {len(source_docs)} chunks initiaux (après filtre catégorie) :")
+            print(f"\n📋 DIAGNOSTIC — {len(source_docs)} chunks (filtre={_sf}) :")
             for _di, _dd in enumerate(source_docs, 1):
                 _dp = _dd.metadata.get('page', '?')
                 _ds = _dd.metadata.get('source', '?')
-                _dc = _dd.page_content[:100].replace('\n', ' ')
-                print(f"  [{_di:02d}] p.{_dp} ({_ds}): {_dc}...")
+                _dcat = _dd.metadata.get('category', '?')
+                _dc = _dd.page_content[:80].replace('\n', ' ')
+                print(f"  [{_di:02d}] p.{_dp} [{_dcat}] ({_ds}): {_dc}...")
 
         # Phase 2 : re-ranker → réduire à k_value pour le LLM
         if mode == "Encyclopédique" and len(source_docs) > k_value:
@@ -537,10 +755,12 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
                 if _aug_ht or _aug_ov >= max(2, len(_qw_aug) * 0.4):
                     _aug_pg = _aug_doc.metadata.get('page', '?')
                     _query_to_use = (
-                        f"{query}\n\n"
-                        f"[Réf. {_aug_i} — DÉFINITION EXACTE dans les documents (p.{_aug_pg})"
-                        f" — utilise ce texte pour répondre]:\n"
-                        f"{_aug_doc.page_content}"
+                        f"Voici la définition officielle trouvée dans les documents "
+                        f"(Réf. {_aug_i}, p.{_aug_pg}) :\n"
+                        f"---\n"
+                        f"{_aug_doc.page_content}\n"
+                        f"---\n\n"
+                        f"{query}"
                     )
                     print(f"🎯 Query augmentée avec Réf. {_aug_i}, p.{_aug_pg}")
                     break
@@ -585,7 +805,8 @@ def process_query(query: str, config, mode: str, level: str, vectordb):
         cited_sources = []
         if mode == "Encyclopédique":
             seen_refs = set()
-            for m in _re.finditer(r'\(Réf\.\s*(\d+)\)', response_text):
+            # Matche (Réf.1), (Réf. 1), (Réf. 1 — ...) et [Réf. 1 — ...]
+            for m in _re.finditer(r'[\(\[]\s*Réf\.\s*(\d+)', response_text):
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(source_docs) and idx not in seen_refs:
                     seen_refs.add(idx)
@@ -719,7 +940,7 @@ def process_creative_query(query: str, config, level: str):
     import re as _re
 
     try:
-        system_prompt = config['prompts']['mj_system']
+        system_prompt = load_prompt(config, 'mj_system')
         model = st.session_state.current_model
         temp = st.session_state.temperature
         top_p = st.session_state.top_p
@@ -1017,32 +1238,21 @@ def main():
         # Zone d'interaction
         st.markdown("### 💬 Interaction")
 
-        # Niveau de narration (les deux modes) + toggle narratif pur (MJ uniquement)
+        # Niveau de narration / détail selon le mode
         if st.session_state.mode == "MJ immersif":
-            col_lvl, col_narr = st.columns([3, 2])
-            with col_lvl:
-                level = st.selectbox(
-                    "Niveau de narration:",
-                    ["Résumé court", "Scène détaillée", "Longue narration immersive"],
-                    key="narration_level",
-                    help="Contrôle la longueur et la richesse de la réponse du MJ"
-                )
-            with col_narr:
-                st.markdown("<br>", unsafe_allow_html=True)
-                creative_mode = st.toggle(
-                    "✨ Narratif pur (sans RAG)",
-                    key="creative_mode",
-                    help="Pour descriptions, PNJ, scènes : le modèle crée librement sans chercher dans les documents"
-                )
+            level = st.selectbox(
+                "Niveau de narration:",
+                ["Résumé court", "Scène détaillée", "Longue narration immersive"],
+                key="narration_level",
+                help="Contrôle la longueur et la richesse de la réponse du MJ"
+            )
         else:
-            # Mode encyclopédique : niveau contrôle la densité de la réponse factuelle
             level = st.selectbox(
                 "Niveau de détail:",
                 ["Points clés", "Explication complète", "Détail exhaustif"],
                 key="narration_level",
                 help="Points clés = bullet points concis | Explication complète = règles + exemples | Détail exhaustif = tout, y compris cas particuliers"
             )
-            creative_mode = False
 
         # Historique des requêtes — clic = renvoi immédiat (sans passer par le form)
         if st.session_state.query_history:
@@ -1083,28 +1293,19 @@ def main():
                 history.insert(0, active_query)
                 st.session_state.query_history = history[:10]
 
-            with st.spinner("✨ Le MJ crée..." if creative_mode else "🤔 Le MJ réfléchit..."):
+            with st.spinner("✨ Le MJ crée..." if st.session_state.mode == "MJ immersif" else "🤔 Recherche en cours..."):
                 try:
-                    if creative_mode and st.session_state.mode == "MJ immersif":
-                        result = process_creative_query(
-                            query=active_query,
-                            config=config,
-                            level=level
-                        )
-                    else:
-                        result = process_query(
-                            query=active_query,
-                            config=config,
-                            mode=st.session_state.mode,
-                            level=level,
-                            vectordb=vectordb
-                        )
+                    result = process_query(
+                        query=active_query,
+                        config=config,
+                        mode=st.session_state.mode,
+                        level=level,
+                        vectordb=vectordb
+                    )
 
                     st.session_state.first_query_sent = True
-                    # Persiste le résultat : survit aux reruns déclenchés par les boutons PDF
                     st.session_state._last_result = result
                     st.session_state._last_query = active_query
-                    st.session_state._last_creative_mode = creative_mode
 
                 except RuntimeError as e:
                     st.error(str(e))
@@ -1124,7 +1325,6 @@ def main():
         if st.session_state.get('_last_result'):
             _r = st.session_state._last_result
             _q = st.session_state._last_query
-            _cm = st.session_state.get('_last_creative_mode', False)
 
             st.markdown("### 💬 Question")
             st.info(f"**{_q}**")
@@ -1173,8 +1373,6 @@ def main():
             if _r.get('confidence') is not None and _r['confidence'] > 0:
                 _cc = "🟢" if _r['confidence'] > 0.7 else "🟡" if _r['confidence'] > 0.4 else "🔴"
                 _caption_parts.append(f"{_cc} Confiance RAG: {_r['confidence']:.0%}")
-            elif _cm:
-                _caption_parts.append("✨ Narratif pur")
             if _r.get('elapsed'):
                 _caption_parts.append(f"⏱️ {_r['elapsed']:.1f}s")
             if _r.get('tokens_in'):

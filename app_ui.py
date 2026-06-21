@@ -426,9 +426,10 @@ def render_config_panel(config):
 
     with col1:
         if mode == "MJ immersif":
+            st.session_state.setdefault('temp_slider', float(st.session_state.get('temperature', 0.8)))
             temp = st.slider(
                 "Température",
-                0.0, 1.0, float(st.session_state.get('temperature', 0.8)),
+                0.0, 1.0,
                 key="temp_slider",
                 step=0.05,
                 help="0.0 = Factuel/fidèle au contexte | 1.0 = Créatif (hallucine plus)"
@@ -439,9 +440,10 @@ def render_config_panel(config):
             st.caption("🔒 Température fixée à 0.0 en mode Encyclopédique")
 
     with col2:
+        st.session_state.setdefault('top_p_slider', float(st.session_state.get('top_p', 0.95)))
         top_p = st.slider(
             "Top-p",
-            0.0, 1.0, float(st.session_state.get('top_p', 0.95)),
+            0.0, 1.0,
             key="top_p_slider",
             step=0.05,
             help="Diversité du vocabulaire — 1.0 = tous les tokens possibles"
@@ -453,10 +455,10 @@ def render_config_panel(config):
     _ctx_default = config.get('model', {}).get('num_ctx', 32768)
     _ctx_options = [16384, 32768, 49152, 65536]
     _ctx_labels  = {16384: "16K", 32768: "32K", 49152: "48K", 65536: "64K"}
+    st.session_state.setdefault('num_ctx_slider', st.session_state.get('num_ctx', _ctx_default))
     ctx_val = st.select_slider(
         "Contexte (num_ctx)",
         options=_ctx_options,
-        value=st.session_state.get('num_ctx', _ctx_default),
         format_func=lambda x: _ctx_labels[x],
         key="num_ctx_slider",
         help="Taille de la fenêtre de contexte du modèle. 32K = bon équilibre. 64K = plus lent, plus de VRAM."
@@ -487,46 +489,33 @@ def render_config_panel(config):
         )
         st.session_state.encyclo_source_filter = source_filter[1]
 
-        col3, col4 = st.columns(2)
-        with col3:
-            k_retrieval = st.slider(
-                "Nombre de chunks (RAG)",
-                1, 100, st.session_state.get('encyclo_k_retrieval', 50),
-                key="k_retrieval_slider",
-                help="Chunks à récupérer du corpus (plus = plus de contexte, mais plus lent)"
-            )
-            st.session_state.encyclo_k_retrieval = k_retrieval
-        with col4:
-            k_mj = st.slider(
-                "Nombre de chunks (MJ)",
-                1, 100, st.session_state.k_retrieval,
-                key="k_mj_slider",
-                help="Chunks à récupérer pour les réponses du MJ"
-            )
-            st.session_state.k_retrieval = k_mj
-
-    st.markdown("---")
-
-    # Affichage
-    col5, col6 = st.columns(2)
-
-    with col5:
-        show_sources = st.checkbox(
-            "Afficher les sources",
-            value=st.session_state.show_sources,
-            key="show_sources_checkbox",
-            help="Montre les documents source utilisés"
+        st.session_state.setdefault('k_retrieval_slider', st.session_state.get('encyclo_k_retrieval', 50))
+        k_retrieval = st.slider(
+            "Nombre de chunks (RAG)",
+            1, 100,
+            key="k_retrieval_slider",
+            help="Chunks à récupérer du corpus (plus = plus de contexte, mais plus lent)"
         )
-        st.session_state.show_sources = show_sources
+        st.session_state.encyclo_k_retrieval = k_retrieval
 
-    with col6:
-        show_debug = st.checkbox(
-            "Mode debug",
-            value=st.session_state.get('show_debug_chunks', False),
-            key="show_debug_checkbox",
-            help="Affiche le contexte complet envoyé au modèle (plus verbeux)"
-        )
-        st.session_state.show_debug_chunks = show_debug
+        col5, col6 = st.columns(2)
+        with col5:
+            show_sources = st.checkbox(
+                "Afficher les sources",
+                value=st.session_state.show_sources,
+                key="show_sources_checkbox",
+                help="Montre les documents source utilisés"
+            )
+            st.session_state.show_sources = show_sources
+
+        with col6:
+            show_debug = st.checkbox(
+                "Mode debug",
+                value=st.session_state.get('show_debug_chunks', False),
+                key="show_debug_checkbox",
+                help="Affiche le contexte complet envoyé au modèle (plus verbeux)"
+            )
+            st.session_state.show_debug_chunks = show_debug
 
     st.markdown("---")
 

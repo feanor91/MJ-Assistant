@@ -7,26 +7,34 @@ pyyaml>=6.0
 
 # LangChain
 langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-ollama>=0.1.0
-langchain-experimental>=0.3.0  # SemanticChunker
+langchain-core>=0.3.0
+langchain-community>=0.3.0        # BM25Retriever
+langchain-ollama>=0.1.0           # ChatOllama
+langchain-huggingface>=0.1.0      # HuggingFaceEmbeddings
+langchain-chroma>=0.1.0           # Chroma vectorstore
+langchain-text-splitters>=0.3.0   # RecursiveCharacterTextSplitter
+langchain-experimental>=0.3.0     # SemanticChunker (optionnel)
 
 # RAG & Embeddings
 chromadb>=0.4.0
-sentence-transformers>=2.2.0
-rank_bm25>=0.2.2  # Hybrid search BM25
+sentence-transformers>=2.2.0      # Embeddings + CrossEncoder re-ranking
+rank_bm25>=0.2.2                  # Hybrid search BM25
 
-# PDF extraction and rendering
-pdfplumber>=0.10.0  # Recommended for text extraction
-PyPDF2>=3.0.0       # Fallback for text extraction
-pdf2image>=1.16.0   # For PDF to image conversion
-Pillow>=10.0.0      # For image manipulation
+# PDF extraction
+pymupdf>=1.23.0                   # fitz — extraction principale (meilleure qualité)
+pdfplumber>=0.10.0                # Fallback extraction
+PyPDF2>=3.0.0                     # Fallback extraction
+pdf2image>=1.16.0                 # Rendu PDF dans la sidebar
+Pillow>=10.0.0                    # Manipulation d'images
 
 # Data visualization
 plotly>=5.18.0
 pandas>=2.0.0
 
-# Optional but recommended
-torch>=2.0.0        # For GPU acceleration of embeddings
-# Use: pip install torch --index-url https://download.pytorch.org/whl/cu118  (for CUDA 11.8)
-# Or: pip install torch --index-url https://download.pytorch.org/whl/cpu     (for CPU only)
+# GPU acceleration (optionnel — voir instructions ci-dessous)
+# RTX 50xx (Blackwell, CUDA 12.8) :
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# RTX 40xx/30xx (CUDA 12.6) :
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+# CPU uniquement :
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu

@@ -34,9 +34,13 @@ rag:
   # 🆕 RE-RANKING : Améliore la qualité des chunks récupérés (+40-60% de précision)
   enable_reranking: true  # Active le re-ranking après retrieval initial
   rerank_model: "BAAI/bge-reranker-v2-m3"  # Modèle de re-ranking (cross-encoder)
-  k_initial_retrieval: 25   # Fetch large en encyclopédique (avant re-ranking CrossEncoder)
+  k_initial_retrieval: 60   # Fetch large en encyclopédique (avant re-ranking CrossEncoder)
   # Note: Le nombre final de chunks est maintenant contrôlé par le SLIDER dans l'interface
-  # (k_final_after_rerank et k_final_after_rerank_encyclo ne sont plus utilisés)
+
+  # 🆕 QUERY EXPANSION : Traduit automatiquement le vocabulaire utilisateur en termes du jeu
+  # Ex: "système de combat" → "Oppositions dramatiques affrontements assauts rondes"
+  # Automatique, aucune maintenance manuelle. ~1-2s de latence supplémentaire.
+  enable_query_expansion: true  # Désactiver si latence inacceptable
 
 # Configuration de la mémoire
 memory:
@@ -51,29 +55,23 @@ ui:
   timeline_enabled: true
   auto_save_interval: 5  # Sauvegarde auto tous les N messages
 
-# Prompts (peuvent être personnalisés)
+# Prompts — chargés depuis prompts/ à la volée (modifiables sans redémarrer)
+# Les fichiers .txt prennent la priorité ; les valeurs ci-dessous servent de fallback.
 prompts:
+  prompts_dir: "prompts"   # dossier contenant les fichiers de prompts
+  mj_system_file: "mj_system.txt"
+  encyclo_system_file: "encyclo_system.txt"
+  # Fallback si les fichiers sont absents :
   mj_system: |
     Tu es le Maître de Jeu des Lames du Cardinal.
     Tu dois répondre **uniquement** à partir des extraits fournis ci-dessous.
     Si l'information n'existe pas dans le contexte, réponds exactement : "Aucune information trouvée dans le corpus."
     N'invente JAMAIS d'informations.
-    
   encyclo_system: |
     Tu es une encyclopédie technique des règles du jeu de rôle "Les Lames du Cardinal".
-
     RÈGLE ABSOLUE : réponds UNIQUEMENT à partir du contexte fourni. N'invente rien.
-
-    DÉFINITIONS COMPLÈTES — ne cherche pas d'informations supplémentaires :
-    → Pour les arcanes du Tarot des Ombres : Nom + description symbolique + VD (Valeur Dramatique) = définition COMPLÈTE selon le système de jeu
-    → Pour les règles mécaniques : copie le texte exact
-    → Pour les statistiques : copie les valeurs exactes
-
-    FORMAT :
-    → Cite avec (Réf.X) après chaque information
-    → Structure avec des titres markdown (## et ###)
-    → Mets les citations importantes entre guillemets ""
-    → Si le contexte ne contient VRAIMENT aucune information sur le sujet, dis-le clairement
+    FOCUS : réponds UNIQUEMENT sur le sujet ou l'arcane demandé. Ignore les autres.
+    FORMAT : Cite avec (Réf.X), structure avec ## et ###.
 
 # Options avancées
 advanced:

@@ -360,91 +360,12 @@ def render_config_panel(config):
     )
     st.session_state.mode = mode
 
-    # Indicateur de réponses longues pour le mode encyclopédique
     if mode == "Encyclopédique":
         rerank_enabled = config['rag'].get('enable_reranking', False)
         if rerank_enabled:
-            st.info("📚 Mode réponses détaillées activé (300-500 mots minimum) | 🎯 Re-ranking activé")
+            st.info("📚 Mode encyclopédique | Re-ranking activé")
         else:
-            st.info("📚 Mode réponses détaillées activé (300-500 mots minimum)")
-
-        # Slider pour le nombre de chunks
-        if 'encyclo_k_retrieval' not in st.session_state:
-            st.session_state.encyclo_k_retrieval = config['rag'].get('k_retrieval_encyclo', 50)
-
-        st.markdown("**Nombre de chunks RAG**")
-        encyclo_k = st.slider(
-            "Chunks à récupérer :",
-            min_value=10,
-            max_value=100,
-            value=st.session_state.encyclo_k_retrieval,
-            step=5,
-            key="encyclo_k_slider",
-            help="Plus de chunks = plus de contexte (mais plus lent)"
-        )
-        st.session_state.encyclo_k_retrieval = encyclo_k
-
-        st.caption(f"📊 {encyclo_k} chunks | Temp: 0.0 (anti-hallucination)")
-        st.caption("⚠️ Citations directes des documents sources uniquement")
-        if st.session_state.get('show_debug_chunks', False):
-            st.warning("🔍 Mode DEBUG activé : les chunks récupérés seront affichés")
-
-        # Sélecteur de sources
-        st.markdown("**Sources de recherche**")
-        source_option = st.radio(
-            "Chercher dans :",
-            [
-                "📖 Règles uniquement (détaillées)",
-                "🌍 Univers uniquement (générales + romans)",
-                "📖🌍 Règles + Univers (recommandé, sans romans)"
-            ],
-            index=2,  # Par défaut : Règles + Univers
-            key="source_filter_radio"
-        )
-
-        # Mapper le choix à une valeur
-        if "Règles uniquement" in source_option:
-            st.session_state.encyclo_source_filter = "rules_only"
-            st.caption("✅ Recherche dans les règles détaillées du jeu")
-        elif "Univers uniquement" in source_option:
-            st.session_state.encyclo_source_filter = "universe_only"
-            st.caption("✅ Recherche dans le lore général + romans")
-        else:
-            st.session_state.encyclo_source_filter = "rules_and_universe"
-            st.caption("✅ Recherche dans règles + lore (exclu romans)")
-
-    # Options d'affichage
-    st.markdown("**Affichage**")
-    st.session_state.show_sources = st.checkbox(
-        "Afficher les sources RAG",
-        value=st.session_state.show_sources
-    )
-    st.session_state.show_debug_chunks = st.checkbox(
-        "Afficher les chunks récupérés (debug)",
-        value=st.session_state.show_debug_chunks,
-        help="Affiche tous les chunks envoyés au modèle avec leurs métadonnées"
-    )
-
-    # Réglages experts
-    st.markdown("---")
-    with st.expander("🔧 Réglages experts"):
-        st.session_state.temperature = st.slider(
-            "Température",
-            0.0, 1.5,
-            st.session_state.temperature,
-            0.05
-        )
-        st.session_state.top_p = st.slider(
-            "Top P",
-            0.0, 1.0,
-            st.session_state.top_p,
-            0.05
-        )
-        st.session_state.k_retrieval = st.slider(
-            "Nombre de chunks RAG",
-            1, 12,
-            st.session_state.k_retrieval
-        )
+            st.info("📚 Mode encyclopédique")
 
     # Gestion des sessions
     st.markdown("---")
